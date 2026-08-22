@@ -21,7 +21,7 @@ Panelen längst ner visar teknisk mätdata (latens, igenkända ord, svåra ord) 
 
 Allt är en enda HTML-fil utan beroenden eller byggsteg. Appen använder webbläsarens inbyggda API:er:
 
-- **Web Speech API (SpeechRecognition)** för taligenkänning på svenska. Fungerar i Chrome och Edge; Firefox och Safari saknar stöd.
+- **Web Speech API (SpeechRecognition)** för taligenkänning på svenska. Fungerar i Chrome och Edge, och i Safari på iOS/macOS (via Apples taligenkänning, kräver att diktering är påslagen). Firefox saknar stöd.
 - **SpeechSynthesis** för uppläsning av ord och uppmuntran. Fler svenska röster kan installeras via systemets talinställningar.
 - **Web Audio API** för ljudeffekter och nivåmätaren.
 
@@ -29,7 +29,7 @@ Ordmatchningen görs med en girig token-alignment mot transkriptionen, med Leven
 
 ### Om integritet
 
-Chromes taligenkänning skickar ljudet till Googles servrar för transkribering — ljudet behandlas alltså inte enbart lokalt. Inget sparas av appen själv; den har ingen backend och lagrar ingenting.
+Chromes taligenkänning skickar ljudet till Googles servrar för transkribering — ljudet behandlas alltså inte enbart lokalt. I Safari används Apples taligenkänning, som ofta körs direkt på enheten. Inget sparas av appen själv; den har ingen backend och lagrar ingenting.
 
 ## Köra lokalt
 
