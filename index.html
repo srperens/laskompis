@@ -813,6 +813,13 @@ function renderSentence(){
     el.appendChild(s);
     el.appendChild(document.createTextNode(' '));
   });
+  // on small screens the sentence can be taller than the stage —
+  // keep the word being read in view as the cursor advances
+  const cur = el.querySelector('.w.current');
+  if(cur) cur.scrollIntoView({
+    block:'center',
+    behavior: matchMedia('(prefers-reduced-motion:reduce)').matches ? 'auto' : 'smooth'
+  });
 }
 
 function renderTrack(){
