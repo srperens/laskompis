@@ -1,0 +1,1270 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Läskompis v0</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#E9EEF2;
+  --ink:#16212B;
+  --faded:#93A4B2;
+  --mark:#FFCF5C;
+  --good:#2E9E7B;
+  --soft:#E5A97F;
+  --rule:#C8D4DC;
+  --panel:#16212B;
+  --panel-ink:#93AABB;
+  --panel-hi:#E9EEF2;
+
+  --read-size:52px;
+  --holdoff:3000;
+}
+
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  background:var(--paper);
+  color:var(--ink);
+  font-family:'Atkinson Hyperlegible',system-ui,sans-serif;
+  display:flex;flex-direction:column;
+  overflow:hidden;
+}
+
+/* ---------- top bar ---------- */
+.top{
+  display:flex;align-items:center;gap:20px;
+  padding:14px 24px;
+  border-bottom:1px solid var(--rule);
+  flex:0 0 auto;
+}
+.wordmark{
+  font-family:'JetBrains Mono',monospace;
+  font-size:12px;letter-spacing:.18em;text-transform:uppercase;
+  color:var(--faded);
+}
+.top-spacer{flex:1}
+.score{
+  font-family:'JetBrains Mono',monospace;
+  font-size:13px;color:var(--faded);
+  display:flex;align-items:center;gap:8px;
+}
+.score svg{width:20px;height:20px;color:var(--mark)}
+.score b{font-size:24px;color:var(--good);font-weight:500;font-variant-numeric:tabular-nums}
+.tbtn{
+  font-family:'JetBrains Mono',monospace;font-size:12px;
+  letter-spacing:.06em;
+  background:none;border:1px solid var(--rule);border-radius:2px;
+  color:var(--faded);padding:7px 12px;cursor:pointer;
+}
+.tbtn:hover{border-color:var(--ink);color:var(--ink)}
+.tbtn:focus-visible{outline:2px solid var(--good);outline-offset:2px}
+
+/* ---------- reading stage ---------- */
+.stage{
+  flex:1 1 auto;
+  display:flex;align-items:center;justify-content:center;
+  padding:40px 6vw;
+  overflow-y:auto;
+}
+#sentence{
+  font-size:var(--read-size);
+  line-height:1.85;
+  max-width:20ch;
+  text-align:left;
+  font-weight:400;
+  letter-spacing:.01em;
+}
+.w{
+  display:inline-block;
+  padding:2px 6px;
+  margin:0 1px;
+  border-radius:4px;
+  transition:color .12s linear, background-color .12s linear, opacity .12s linear;
+}
+@media (prefers-reduced-motion:reduce){ .w{transition:none} }
+
+.w.coming{color:var(--ink)}
+.w.done{color:var(--faded)}
+.w.skipped{color:var(--faded);text-decoration:underline;text-decoration-color:var(--soft);text-decoration-thickness:2px;text-underline-offset:6px}
+.w.current{background:var(--mark);color:var(--ink);font-weight:700}
+.w.helping{background:var(--soft);color:var(--ink);font-weight:700}
+
+/* ---------- child-facing hint ---------- */
+.hint{
+  flex:0 0 auto;
+  text-align:center;
+  font-size:20px;
+  color:var(--faded);
+  min-height:34px;
+  padding-bottom:10px;
+}
+.hint.warm{color:var(--good)}
+
+/* ---------- controls ---------- */
+.controls{
+  flex:0 0 auto;
+  display:flex;justify-content:center;gap:12px;
+  padding:0 24px 20px;
+}
+.icon{
+  width:82px;height:82px;border-radius:50%;
+  border:2px solid var(--ink);
+  background:var(--paper);color:var(--ink);
+  display:grid;place-items:center;
+  cursor:pointer;padding:0;
+}
+.icon svg{width:36px;height:36px;display:block}
+.icon.primary{background:var(--ink);color:var(--paper)}
+.icon.live{background:var(--good);border-color:var(--good);color:#fff}
+.icon:focus-visible{outline:3px solid var(--good);outline-offset:4px}
+.icon:active{transform:scale(.95)}
+@media (prefers-reduced-motion:reduce){ .icon:active{transform:none} }
+
+.big{
+  font-family:'Atkinson Hyperlegible',sans-serif;
+  font-size:19px;
+  padding:14px 30px;
+  border-radius:6px;
+  border:2px solid var(--ink);
+  background:var(--paper);color:var(--ink);
+  cursor:pointer;
+}
+.big.primary{background:var(--ink);color:var(--paper)}
+.big:focus-visible{outline:3px solid var(--good);outline-offset:3px}
+.big:disabled{opacity:.35;cursor:not-allowed}
+
+/* ---------- instrument panel ---------- */
+.panel{
+  flex:0 0 auto;
+  background:var(--panel);
+  color:var(--panel-ink);
+  font-family:'JetBrains Mono',monospace;
+  font-size:11px;
+  padding:12px 24px 14px;
+  display:flex;flex-direction:column;gap:10px;
+}
+.track{
+  display:flex;gap:3px;height:26px;align-items:flex-end;
+}
+.seg{
+  flex:1 1 0;height:6px;border-radius:1px;
+  background:#2C3D4C;
+  transition:height .1s linear, background-color .1s linear;
+}
+.seg.done{background:var(--good)}
+.seg.skipped{background:var(--soft)}
+.seg.current{background:var(--mark);height:26px}
+.readouts{display:flex;gap:26px;flex-wrap:wrap;align-items:center}
+.ro{display:flex;gap:7px;align-items:baseline}
+.ro span{color:#5C7182;letter-spacing:.08em}
+.ro b{color:var(--panel-hi);font-weight:500;font-variant-numeric:tabular-nums}
+.level{
+  width:90px;height:6px;background:#2C3D4C;border-radius:3px;overflow:hidden;
+}
+.level i{display:block;height:100%;width:0%;background:var(--good)}
+.hyp{color:#5C7182;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}
+
+/* ---------- setup sheet ---------- */
+.sheet{
+  position:fixed;inset:0;background:rgba(22,33,43,.55);
+  display:none;align-items:center;justify-content:center;padding:24px;
+  z-index:10;
+}
+.sheet.open{display:flex}
+.card{
+  background:var(--paper);border-radius:8px;
+  width:min(620px,100%);max-height:82vh;
+  display:flex;flex-direction:column;overflow:hidden;
+}
+.card h2{font-size:21px;margin-bottom:3px}
+.card p.sub{color:var(--faded);font-size:14.5px;line-height:1.5}
+.card > header{padding:24px 26px 0;flex:0 0 auto}
+
+.tabs{
+  display:flex;gap:2px;padding:16px 26px 0;
+  border-bottom:1px solid var(--rule);flex:0 0 auto;
+}
+.tab{
+  font-family:'JetBrains Mono',monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;
+  background:none;border:0;border-bottom:2px solid transparent;
+  color:var(--faded);padding:10px 13px;cursor:pointer;margin-bottom:-1px;
+}
+.tab[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--ink)}
+.tab:hover{color:var(--ink)}
+.tab:focus-visible{outline:2px solid var(--good);outline-offset:-2px}
+
+.cardbody{padding:22px 26px;overflow-y:auto;flex:1 1 auto;min-height:0}
+.tabpage{display:none}
+.tabpage.active{display:block}
+.tabpage .field:last-child{margin-bottom:0}
+
+.card > footer{
+  padding:14px 26px 18px;border-top:1px solid var(--rule);
+  flex:0 0 auto;display:flex;justify-content:flex-end;
+}
+.field{margin-bottom:20px}
+.field label{
+  display:block;font-family:'JetBrains Mono',monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--faded);margin-bottom:7px;
+}
+textarea,select,input[type=range]{width:100%;font-family:inherit}
+textarea{
+  font-size:17px;line-height:1.6;padding:12px;border:1px solid var(--rule);
+  border-radius:4px;background:#fff;color:var(--ink);resize:vertical;min-height:110px;
+}
+select{font-size:15px;padding:9px;border:1px solid var(--rule);border-radius:4px;background:#fff;color:var(--ink)}
+.voicerow{display:flex;gap:8px;align-items:stretch}
+.voicerow select{flex:1;min-width:0}
+.voicerow .tbtn{flex:0 0 auto;white-space:nowrap}
+.vinfo{font-size:12.5px;color:var(--faded);line-height:1.45;margin-top:7px}
+.check{
+  display:flex;gap:10px;align-items:flex-start;
+  font-family:'Atkinson Hyperlegible',sans-serif;font-size:15px;
+  text-transform:none;letter-spacing:0;color:var(--ink);
+  margin-bottom:11px;cursor:pointer;
+}
+.check input{margin-top:3px;width:17px;height:17px;flex:0 0 auto;accent-color:var(--ink)}
+.check em{display:block;font-style:normal;font-size:12.5px;color:var(--faded);margin-top:2px}
+.row{display:flex;gap:18px}
+.row>.field{flex:1}
+.val{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--ink);float:right}
+.presets{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+.chip{
+  font-size:14px;padding:7px 13px;border:1px solid var(--rule);border-radius:20px;
+  background:#fff;cursor:pointer;color:var(--ink);
+}
+.chip em{
+  font-family:'JetBrains Mono',monospace;font-style:normal;
+  font-size:11px;color:var(--faded);margin-left:5px;
+}
+.chip:hover{border-color:var(--ink)}
+.chip:focus-visible{outline:2px solid var(--good);outline-offset:2px}
+.note{
+  font-size:14px;color:var(--faded);line-height:1.6;
+  border-left:2px solid var(--rule);padding-left:14px;
+}
+.note + .note{margin-top:16px}
+.err{
+  background:var(--soft);color:var(--ink);padding:12px 14px;border-radius:4px;
+  font-size:15px;line-height:1.5;margin-bottom:18px;display:none;
+}
+.err.show{display:block}
+</style>
+</head>
+<body>
+
+<div class="top">
+  <div class="wordmark">läskompis · v0</div>
+  <div class="top-spacer"></div>
+  <div class="score" id="scoreBox"><b id="score">0</b></div>
+  <button class="tbtn" id="setupBtn" aria-label="Text och inställningar" title="Text och inställningar">Text &amp; inställningar</button>
+</div>
+
+<div class="stage"><div id="sentence"></div></div>
+
+<div class="hint" id="hint">Tryck på Börja läsa när du är redo.</div>
+
+<div class="controls">
+  <button class="icon primary" id="startBtn" aria-label="Börja läsa" title="Börja läsa — mellanslag"></button>
+  <button class="icon" id="sayBtn" aria-label="Lyssna på ordet" title="Läs ordet åt mig"></button>
+  <button class="icon" id="nextBtn" aria-label="Nästa mening" title="Nästa mening"></button>
+</div>
+
+<div class="panel">
+  <div class="track" id="track"></div>
+  <div class="readouts">
+    <div class="ro"><span>LATENS</span><b id="roLat">–</b></div>
+    <div class="ro"><span>MEDIAN</span><b id="roMed">–</b></div>
+    <div class="ro"><span>ORD</span><b id="roPos">0/0</b></div>
+    <div class="ro"><span>MISS</span><b id="roMiss">0</b></div>
+    <div class="ro"><span>TOK</span><b id="roTok">0/0</b></div>
+    <div class="ro"><span>SVÅRA</span><b id="roHard">0</b></div>
+    <div class="ro"><span>HÖRDE</span><b id="roHeard">—</b></div>
+    <div class="ro"><span>NIVÅ</span><div class="level"><i id="lvl"></i></div></div>
+    <div class="hyp" id="roHyp">—</div>
+  </div>
+</div>
+
+<div class="sheet" id="sheet">
+  <div class="card" role="dialog" aria-label="Text och inställningar">
+
+    <header>
+      <h2>Text &amp; inställningar</h2>
+      <p class="sub" id="sheetSub">Klistra in läsläxan, en mening per rad.</p>
+    </header>
+
+    <div class="tabs" role="tablist">
+      <button class="tab" role="tab" data-tab="text"     aria-selected="true">Text</button>
+      <button class="tab" role="tab" data-tab="lasning"  aria-selected="false">Läsning</button>
+      <button class="tab" role="tab" data-tab="rost"     aria-selected="false">Röst</button>
+      <button class="tab" role="tab" data-tab="teknik"   aria-selected="false">Teknik</button>
+    </div>
+
+    <div class="cardbody">
+      <div class="err" id="err"></div>
+
+      <section class="tabpage active" data-page="text">
+        <div class="field">
+          <label>Färdiga texter</label>
+          <div class="presets" id="presets"></div>
+        </div>
+        <div class="field">
+          <label>Egen text</label>
+          <textarea id="txt"></textarea>
+        </div>
+      </section>
+
+      <section class="tabpage" data-page="lasning">
+        <div class="field">
+          <label>Textstorlek <span class="val" id="vSize">52 px</span></label>
+          <input type="range" id="rSize" min="28" max="86" step="2" value="52">
+        </div>
+        <div class="field">
+          <label>Väntetid före hjälp <span class="val" id="vHold">8,0 s</span></label>
+          <input type="range" id="rHold" min="1000" max="20000" step="500" value="8000">
+        </div>
+        <div class="field">
+          <label>Stränghet</label>
+          <select id="strict">
+            <option value="mild">Mild — släpper igenom nästan allt</option>
+            <option value="normal" selected>Normal — kräver rätt begynnelsebokstav</option>
+            <option value="strang">Sträng — inga överhopp, nästan exakt match</option>
+          </select>
+        </div>
+      </section>
+
+      <section class="tabpage" data-page="rost">
+        <div class="field">
+          <label>Talhastighet — ord <span class="val" id="vRate">0,90</span></label>
+          <input type="range" id="rRate" min="0.6" max="1.6" step="0.05" value="0.9">
+        </div>
+        <div class="field">
+          <label>Röst</label>
+          <div class="voicerow">
+            <select id="voice"></select>
+            <button class="tbtn" id="testVoiceBtn" title="Hör hur rösten låter">Prova</button>
+          </div>
+          <p class="vinfo" id="voiceInfo"></p>
+        </div>
+        <div class="field">
+          <label>Ljud</label>
+          <label class="check">
+            <input type="checkbox" id="cbOk" checked>
+            <span>Pling när ett ord blir rätt <em>tonen stiger vid flera rätt i rad</em></span>
+          </label>
+          <label class="check">
+            <input type="checkbox" id="cbFail">
+            <span>Ton när ett ord blir fel <em>avstängt som standard — igenkännaren hör fel ibland</em></span>
+          </label>
+        </div>
+        <div class="field">
+          <label>Ljudvolym <span class="val" id="vVol">85 %</span></label>
+          <input type="range" id="rVol" min="0" max="100" step="5" value="85">
+        </div>
+      </section>
+
+      <section class="tabpage" data-page="teknik">
+        <p class="note">
+          Den här versionen använder webbläsarens egen taligenkänning för svenska.
+          Den är byggd för vuxenröster och lägger 300–800 ms i latens — tillräckligt
+          för att pröva om samspelet fungerar, inte för att bedöma hur bra
+          spårningen kan bli. Mätningen längst ner räknar tiden från att rösten
+          startar till att markören flyttar sig.
+        </p>
+        <p class="note">
+          Kör sidan via <b>http://localhost</b> i stället för att öppna filen direkt,
+          så slipper du frågan om mikrofonen varje gång:
+          <code>python3 -m http.server 8000</code> i mappen där filen ligger.
+        </p>
+        <p class="note">
+          Fler svenska röster laddas ner under Systeminställningar ›
+          Hjälpmedel › Talat innehåll › Hantera röster. Starta om webbläsaren efteråt.
+        </p>
+      </section>
+    </div>
+
+    <footer>
+      <button class="big primary" id="closeBtn">Klart</button>
+    </footer>
+
+  </div>
+</div>
+
+<script>
+'use strict';
+
+/* ================= texter ================= */
+const PRESETS = {
+
+  'Första orden': [
+    'Jag ser en katt.',
+    'Vi går hem nu.',
+    'Han har en boll.',
+    'Hon är glad i dag.',
+    'Det är kallt ute.',
+    'Mamma kommer snart.',
+    'Kan du se mig?',
+    'Nu ska vi äta.',
+    'Boken är röd.',
+    'Var är min mössa?',
+    'Vi sitter på golvet.',
+    'Det står en bil där.'
+  ],
+
+  'Korta meningar': [
+    'Hunden springer efter bollen i gräset.',
+    'Vi bakar bullar med mormor i dag.',
+    'Solen skiner och snön smälter bort.',
+    'Pappa letar efter sina nycklar igen.',
+    'Katten sover på stolen vid fönstret.',
+    'Jag hittade en fin sten på stranden.',
+    'Bussen kommer om tio minuter.',
+    'Vi bygger en koja bakom huset.',
+    'Isen på sjön är tjock och blank.',
+    'Min cykel har fått ett nytt däck.',
+    'Det brinner en brasa i kaminen.',
+    'Han glömde sin väska i hallen.'
+  ],
+
+  'Meningar': [
+    'Katten satt på mattan och tittade ut genom fönstret.',
+    'Det regnade hela dagen så vi stannade inne och byggde en koja.',
+    'På vintern är sjön täckt av is och vi kan åka skridskor.',
+    'Han hittade en gammal nyckel under trappan och undrade vad den gick till.',
+    'När vi kom fram till stugan hade det redan börjat mörkna.',
+    'Fåglarna satt tysta i trädet och väntade på att regnet skulle sluta.',
+    'Vi packade ryggsäcken med smörgåsar och gick ut i skogen.',
+    'Det luktade nybakat bröd hela vägen ut i hallen.',
+    'Snön låg så djup på vägen att bilen inte kom fram.',
+    'Han räknade stjärnorna tills han somnade.',
+    'Vinden tog tag i seglet och båten lutade åt sidan.',
+    'Under bron bodde det en familj med fyra ankungar.'
+  ],
+
+  'Rymden': [
+    'Månen lyser för att solen skiner på den.',
+    'Jorden snurrar ett varv runt sin egen axel varje dygn.',
+    'Det tar åtta minuter för ljuset att nå oss från solen.',
+    'Stjärnorna vi ser på natten är andra solar långt borta.',
+    'Mars ser röd ut för att marken där innehåller rost.',
+    'En komet har en lång svans av is och damm.',
+    'Saturnus ringar består av miljontals små isbitar.',
+    'Norrsken uppstår när partiklar från solen träffar luften högt uppe.',
+    'Det finns fler stjärnor i himlen än sandkorn på en strand.',
+    'Ljuset från vissa stjärnor har rest i tusentals år innan det når oss.'
+  ],
+
+  'Djur och natur': [
+    'Igelkotten rullar ihop sig när den blir rädd.',
+    'Ekorren gömmer nötter inför vintern och glömmer var de ligger.',
+    'Grodorna lägger sina ägg i vattnet på våren.',
+    'En älg kan vara lika hög som en dörr.',
+    'Myror bär saker som väger mer än de själva gör.',
+    'Ugglan flyger nästan helt ljudlöst genom skogen.',
+    'Bävern fäller träd med bara tänderna.',
+    'Fladdermössen hittar vägen i mörkret med hjälp av ljud.',
+    'Om hösten flyger tranorna söderut i stora flockar.',
+    'Barrträd behåller sina barr hela vintern.'
+  ],
+
+  'Kluriga ljud': [
+    'Skjortan hängde på kroken i hallen.',
+    'Kjolen var gul med vita prickar.',
+    'Stjärnan lyste starkast längst upp i norr.',
+    'Ljuset från lampan var alldeles för skarpt.',
+    'Hjulet på kärran gnisslade uppför backen.',
+    'Djuret gömde sig bakom en stor sten.',
+    'Sjön låg blank och stilla i morgonljuset.',
+    'Tjugo tjocka tallar växte längs stigen.',
+    'Kängorna stod kvar utanför dörren.',
+    'Hjärtat slog fort när han sprang.'
+  ],
+
+  'Berättelse: Nyckeln': [
+    'Elsa hittade en liten nyckel i lådan under trappan.',
+    'Nyckeln var av mässing och kändes kall i handen.',
+    'Hon gick runt i huset och provade alla lås hon kunde hitta.',
+    'Ingen dörr ville öppna sig.',
+    'Till slut visade farmor henne en gammal klocka uppe på vinden.',
+    'Nyckeln passade precis i hålet på baksidan.',
+    'Elsa vred om, och klockan började ticka igen efter många år.'
+  ],
+
+  'Berättelse: Första snön': [
+    'På morgonen var hela gården vit.',
+    'Snön hade kommit under natten utan att någon hört något.',
+    'Simon drog på sig stövlarna och sprang ut innan frukost.',
+    'Han gjorde de första fotspåren över gräsmattan.',
+    'Sedan lade han sig på rygg och viftade med armarna.',
+    'När han reste sig fanns det en ängel kvar i snön.',
+    'Inifrån köket knackade mamma på rutan och vinkade åt honom.'
+  ],
+
+  'Längre text': [
+    'Tidigt på morgonen gick Elsa ner till bryggan för att titta på fåglarna.',
+    'Vattnet var alldeles stilla och det gick att se ända ner till botten.',
+    'En gädda simmade förbi och försvann in bland vassen innan hon hann ropa.',
+    'När hon kom hem berättade hon om allt hon hade sett, och ingen trodde henne riktigt.',
+    'Nästa morgon gick hela familjen med ner till bryggan för att se efter.',
+    'De satt tysta i nästan en timme utan att det hände någonting alls.',
+    'Precis när de skulle gå hem bröt något stort igenom ytan och försvann igen.'
+  ]
+};
+
+/* ================= tillstånd ================= */
+const S = {
+  lines: PRESETS['Meningar'].slice(),
+  line: 0,
+  words: [],        // {raw, norm, state}
+  pos: 0,
+  score: 0,
+  misses: 0,
+  running: false,
+  holdoff: 8000,
+  strict: 'normal',
+  hard: new Map(),
+  reviewing: false,
+  ignoreResults: false,
+  posSince: 0,
+  hypConsumed: 0,
+  lastRescue: 0,
+  sndOk: true,
+  sndFail: false,
+  vol: 0.85,
+  streak: 0,
+  lastMiscueKey: '',
+  lastMiscueAt: 0,
+  speakTimer: null,
+  rate: 0.9,
+  voice: null,
+  lats: [],
+  onsetAt: null,    // tidsstämpel för röstansats
+  holdTimer: null,
+  speaking: false
+};
+
+/* ================= ljud ================= */
+/* Genereras i WebAudio, inga filer. Korta och lågmälda: ljudet ska bekräfta,
+   inte döma. Felljudet är därför en mjuk nedåtgående ton och avstängt som
+   standard — igenkännaren har fel ibland, och då blir en negativ signal
+   orättvis mot ett barn som faktiskt läste rätt. */
+let sfxCtx = null, sfxOut = null;
+
+function sfx(){
+  if(!S.vol) return null;
+  if(!sfxCtx){
+    try{ sfxCtx = new (window.AudioContext||window.webkitAudioContext)(); }
+    catch(e){ return null; }
+    // Kompressor sist i kedjan: tonerna summeras och skulle annars klippa
+    // när nivån är uppskruvad.
+    const comp = sfxCtx.createDynamicsCompressor();
+    comp.threshold.value = -10;
+    comp.ratio.value = 8;
+    comp.attack.value = 0.003;
+    comp.release.value = 0.12;
+    sfxOut = sfxCtx.createGain();
+    sfxOut.gain.value = 1;
+    sfxOut.connect(comp);
+    comp.connect(sfxCtx.destination);
+  }
+  if(sfxCtx.state==='suspended') sfxCtx.resume().catch(()=>{});
+  return sfxCtx;
+}
+
+/* Kort attack, kort platå, mjuk utklingning. Platån gör att ljudet uppfattas
+   som lika starkt som tal — ett rent blipp låter svagare än det mäter. */
+function tone(freq, startAt, dur, peak, type='sine'){
+  const ctx = sfx(); if(!ctx) return;
+  const t = ctx.currentTime + startAt;
+  const osc = ctx.createOscillator();
+  const g = ctx.createGain();
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, t);
+  const v = Math.max(0.0001, peak * S.vol);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.linearRampToValueAtTime(v, t + 0.010);
+  g.gain.setValueAtTime(v, t + dur * 0.35);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  osc.connect(g); g.connect(sfxOut);
+  osc.start(t); osc.stop(t + dur + 0.03);
+}
+
+/* Stigande tonhöjd med antalet rätt i rad — en belöningsgradient som inte
+   kräver att man kan läsa siffran uppe i hörnet. */
+function playOk(){
+  if(!S.sndOk) return;
+  const step = Math.min(S.streak, 7);
+  const base = 880 * Math.pow(2, step/12);
+  tone(base, 0, 0.24, 0.55);
+  tone(base * 1.5, 0.05, 0.20, 0.30);
+}
+
+function playFail(){
+  if(!S.sndFail) return;
+  tone(330, 0, 0.22, 0.38, 'triangle');
+  tone(262, 0.09, 0.26, 0.32, 'triangle');
+}
+
+function playDone(){
+  if(!S.sndOk) return;
+  [523.25, 659.25, 783.99, 1046.5].forEach((f,i)=> tone(f, i*0.11, 0.40, 0.45));
+}
+
+const $ = id => document.getElementById(id);
+
+/* ================= symboler ================= */
+/* Gränssnittet ska gå att använda av någon som inte kan läsa ännu:
+   spela, lyssna, vidare. Texten finns kvar som aria-label och verktygstips. */
+const svg = (inner,fill) =>
+  `<svg viewBox="0 0 24 24" aria-hidden="true" fill="${fill?'currentColor':'none'}">${inner}</svg>`;
+
+const ICON = {
+  play:  svg('<path d="M8 5.2v13.6L18.8 12z"/>', true),
+  pause: svg('<path d="M7 5h3.4v14H7zM13.6 5H17v14h-3.4z"/>', true),
+  ear:   svg('<path d="M4 9.5v5h3.6L12.4 19V5L7.6 9.5z" fill="currentColor"/>'+
+             '<path d="M15.6 9.2a4 4 0 0 1 0 5.6" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>'+
+             '<path d="M18.2 6.6a7.6 7.6 0 0 1 0 10.8" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>'),
+  next:  svg('<path d="M4.5 12h13M12.6 6.6 18 12l-5.4 5.4" stroke="currentColor" stroke-width="2.3" '+
+             'stroke-linecap="round" stroke-linejoin="round"/>'),
+  star:  svg('<path d="M12 3.3l2.7 5.5 6 .9-4.35 4.25 1.03 6L12 17.1l-5.38 2.85 1.03-6L3.3 9.7l6-.9z"/>', true)
+};
+
+function setIcons(){
+  $('startBtn').innerHTML = S.running ? ICON.pause : ICON.play;
+  $('sayBtn').innerHTML   = ICON.ear;
+  $('nextBtn').innerHTML  = ICON.next;
+  $('startBtn').setAttribute('aria-label', S.running ? 'Pausa' : 'Börja läsa');
+  $('startBtn').setAttribute('title', S.running ? 'Pausa — mellanslag' : 'Börja läsa — mellanslag');
+  if(!$('scoreBox').querySelector('svg')){
+    $('scoreBox').insertAdjacentHTML('afterbegin', ICON.star);
+  }
+}
+
+/* ================= normalisering ================= */
+function norm(w){
+  return w.toLowerCase()
+    .replace(/[.,!?;:"'“”„»«…\-–—()]/g,'')
+    .trim();
+}
+function tokens(str){
+  return str.split(/\s+/).map(norm).filter(Boolean);
+}
+
+/* likhet: normaliserad Levenshtein */
+function lev(a,b){
+  if(a===b) return 0;
+  const m=a.length,n=b.length;
+  if(!m) return n; if(!n) return m;
+  let prev=new Array(n+1), cur=new Array(n+1);
+  for(let j=0;j<=n;j++) prev[j]=j;
+  for(let i=1;i<=m;i++){
+    cur[0]=i;
+    for(let j=1;j<=n;j++){
+      cur[j]=Math.min(prev[j]+1, cur[j-1]+1, prev[j-1]+(a[i-1]===b[j-1]?0:1));
+    }
+    [prev,cur]=[cur,prev];
+  }
+  return prev[n];
+}
+function sim(a,b){
+  if(!a||!b) return 0;
+  const d=lev(a,b), L=Math.max(a.length,b.length);
+  return 1 - d/L;
+}
+
+/* Stränghetsnivåer.
+   budget = tillåtet antal teckenfel, beroende på ordlängd
+   first  = kräver att första bokstaven stämmer
+   skip   = hur många ord som får hoppas över framåt
+   dwell  = hur länge markören måste ha stått på ett ord innan det får
+            hoppas över. Utan detta går det att börja läsa mitt i meningen. */
+const STRICTNESS = {
+  mild:   { budget:l=> l<=3?1 : l<=6?2 : 3, first:false, skip:2, dwell:700 },
+  normal: { budget:l=> l<=3?0 : l<=6?1 : 2, first:true,  skip:1, dwell:1800 },
+  strang: { budget:l=> l<=4?0 : 1,          first:true,  skip:0, dwell:0 }
+};
+
+/* Ersätter den gamla toleranströskeln. Returnerar true/false, inte ett flyttal —
+   för korta ord finns ingen meningsfull gråzon. */
+function matches(hyp, ref){
+  if(!hyp || !ref) return false;
+  if(hyp === ref) return true;
+  const rule = STRICTNESS[S.strict];
+  if(rule.first && ref.length >= 4 && hyp[0] !== ref[0]) return false;
+  // stor längdskillnad = annat ord, inte uttalsvariant
+  if(Math.abs(hyp.length - ref.length) > rule.budget(ref.length)) return false;
+  return lev(hyp, ref) <= rule.budget(ref.length);
+}
+
+/* ================= mening ================= */
+/* Igenkännaren ackumulerar resultat över hela sessionen. Vid meningsbyte måste
+   den listan tömmas, annars matchas gammalt tal mot den nya meningen — vanliga
+   småord som "och" eller "på" flyttar då markören utan att någon sagt något.
+   Enda pålitliga sättet att tömma den är att starta om sessionen. */
+function resetTranscript(){
+  S.onsetAt = null;
+  S.hypConsumed = 0;
+  wasLoud = false;
+  $('roHyp').textContent = '—';
+  $('roHeard').textContent = '—';
+  if(S.running && rec){
+    S.ignoreResults = true;          // kasta allt som hinner komma före omstart
+    try{ rec.stop(); }catch(e){}     // onend startar om, onstart släpper spärren
+  }
+}
+
+function loadLine(){
+  const raw = (S.lines[S.line]||'').trim();
+  S.words = raw.split(/\s+/).filter(Boolean).map(w=>({
+    raw:w, norm:norm(w), state:'coming'
+  }));
+  S.pos = 0;
+  S.posSince = performance.now();
+  S.streak = 0;
+  S.lastMiscueKey = '';
+  resetTranscript();
+  renderSentence();
+  renderTrack();
+  updateReadouts();
+}
+
+function renderSentence(){
+  const el = $('sentence');
+  el.innerHTML = '';
+  S.words.forEach((w,i)=>{
+    const s = document.createElement('span');
+    s.className = 'w ' + (i===S.pos && S.running ? 'current' : w.state);
+    s.textContent = w.raw;
+    s.dataset.i = i;
+    s.addEventListener('click',()=>{ speak(w.raw); });
+    el.appendChild(s);
+    el.appendChild(document.createTextNode(' '));
+  });
+}
+
+function renderTrack(){
+  const t = $('track');
+  t.innerHTML='';
+  S.words.forEach((w,i)=>{
+    const d=document.createElement('div');
+    d.className='seg ' + (i===S.pos && S.running ? 'current' : (w.state==='coming'?'':w.state));
+    t.appendChild(d);
+  });
+}
+
+function updateReadouts(){
+  $('roPos').textContent = `${S.pos}/${S.words.length}`;
+  $('roMiss').textContent = S.misses;
+  $('score').textContent = S.score;
+  if(S.lats.length){
+    const sorted=[...S.lats].sort((a,b)=>a-b);
+    $('roMed').textContent = Math.round(sorted[Math.floor(sorted.length/2)])+' ms';
+  }
+}
+
+function setHint(txt, warm){
+  const h=$('hint');
+  h.textContent = txt;
+  h.className = 'hint' + (warm?' warm':'');
+}
+
+/* ================= alignment (girig token-passing) ================= */
+/* Körs om från meningens början vid varje resultat → idempotent mot
+   interimsuppdateringar. Tillåter överhoppade ord och utfyllnad. */
+/* Alignmenten förankras vid den bekräftade positionen. Tidigare replayades hela
+   meningen vid varje resultat, vilket gjorde den sårbar för att igenkännaren
+   skriver om text den redan levererat: ett omtolkat ord längre bak kunde låsa
+   markören för resten av meningen. Nu ligger avgjorda ord fast, och bara de ännu
+   inte förbrukade hypotesorden prövas mot orden från markören och framåt. */
+function align(hypTokens, fromWord, fromTok){
+  let i=fromWord, j=fromTok;
+  const states = S.words.map(w=>w.state);
+  const miscues = [];
+  const rule = STRICTNESS[S.strict];
+
+  // Hur många ord som totalt får passeras under det här passet. Noll tills
+  // markören stått kvar tillräckligt länge. Budgeten förbrukas, annars kan
+  // hopp kedjas ihop genom hela meningen.
+  let budget = (performance.now() - S.posSince) >= rule.dwell ? rule.skip : 0;
+  let consumed = j;
+
+  while(j<hypTokens.length && i<S.words.length){
+    const h = hypTokens[j];
+
+    if(matches(h, S.words[i].norm)){
+      states[i]='done'; i++; j++; consumed=j;
+      continue;
+    }
+
+    let jumped = false;
+    for(let k=1; k<=budget && i+k < S.words.length; k++){
+      if(matches(h, S.words[i+k].norm)){
+        for(let m=0;m<k;m++){ states[i]='skipped'; i++; }
+        states[i]='done'; i++; j++; consumed=j;
+        budget -= k;
+        jumped = true; break;
+      }
+    }
+    if(jumped) continue;
+
+    // hypotesordet hörde inte hit — notera det om det ligger nära nog
+    // att vara ett läsförsök på det aktuella ordet, inte bara brus
+    const ref = S.words[i].norm;
+    if(h.length>1 && sim(h, ref) > 0.34){
+      miscues.push({heard:h, expected:S.words[i].raw, at:i});
+    }
+    j++;
+  }
+  return {states, pos:i, consumed, miscues};
+}
+
+function applyAlign(hypTokens){
+  // Igenkännaren kan när som helst leverera en kortare tokenlista än förut —
+  // vid sessionsomstart, eller när ett interimsresultat ersätts av ett kortare
+  // slutresultat. Ligger ankaret då utanför listan står markören still för
+  // gott, så det måste fångas här.
+  if(S.hypConsumed > hypTokens.length) S.hypConsumed = 0;
+  $('roTok').textContent = S.hypConsumed + '/' + hypTokens.length;
+
+  const {states,pos,consumed,miscues} = align(hypTokens, S.pos, S.hypConsumed);
+
+  // rapportera felläsningsförsök även när markören inte flyttar sig
+  if(miscues.length){
+    const m = miscues[miscues.length-1];
+    if(m.at === S.pos){
+      $('roHeard').textContent = m.heard + ' \u2260 ' + m.expected;
+      noteHard(m.expected);
+      // interimsresultat upprepar samma gissning många gånger i rad —
+      // ljud bara när försöket faktiskt är ett nytt
+      const key = m.at + ':' + m.heard;
+      const now = performance.now();
+      if(key !== S.lastMiscueKey && now - S.lastMiscueAt > 600){
+        S.lastMiscueKey = key;
+        S.lastMiscueAt = now;
+        S.streak = 0;
+        playFail();
+      }
+    }
+  }
+
+  if(pos <= S.pos) return false;
+
+  // latensmätning: från röstansats till första framflyttning
+  if(S.onsetAt !== null){
+    const lat = performance.now() - S.onsetAt;
+    if(lat > 40 && lat < 4000){
+      S.lats.push(lat);
+      $('roLat').textContent = Math.round(lat)+' ms';
+    }
+    S.onsetAt = null;
+  }
+
+  const gained = pos - S.pos;
+  states.forEach((st,k)=>{ S.words[k].state = st; });
+  let anyDone=false, anySkipped=false;
+  for(let k=S.pos;k<pos;k++){
+    if(S.words[k].state==='done'){ S.score++; anyDone=true; }
+    if(S.words[k].state==='skipped'){ S.misses++; anySkipped=true; }
+  }
+  if(anySkipped) S.streak = 0;
+  if(anyDone){ S.streak++; playOk(); S.lastMiscueKey=''; }
+  S.pos = pos;
+  S.posSince = performance.now();
+  S.hypConsumed = consumed;
+  renderSentence(); renderTrack(); updateReadouts();
+  armHoldoff();
+
+  if(S.pos >= S.words.length){
+    finishLine();
+  } else if(gained>0){
+    setHint('', false);
+  }
+  return true;
+}
+
+function noteHard(word){
+  const k = word.toLowerCase();
+  S.hard.set(k, (S.hard.get(k)||0) + 1);
+  $('roHard').textContent = S.hard.size;
+}
+
+function hardList(n){
+  return [...S.hard.entries()]
+    .sort((a,b)=>b[1]-a[1])
+    .slice(0,n)
+    .map(e=>e[0]);
+}
+
+function finishLine(){
+  clearTimeout(S.holdTimer);
+  setHint('Bra läst!', true);
+  speak('Bra läst!', 'phrase');
+  setTimeout(()=>{
+    if(S.line < S.lines.length-1){ S.line++; loadLine(); setHint('Fortsätt när du vill.'); }
+    else if(S.hard.size && !S.reviewing){
+      // repetera de ord som var svåra, ett i taget
+      S.reviewing = true;
+      S.lines = hardList(6);
+      S.line = 0; loadLine();
+      setHint('Nu tar vi de svåraste orden en gång till.');
+      speak('Nu tar vi de svåra orden en gång till.', 'phrase');
+    }
+    else {
+      stop();
+      playDone();
+      setHint('Klart! Alla meningar är lästa.', true);
+      speak('Nu är alla meningar lästa. Nu är vi klara. Vad duktig du är!', 'phrase');
+    }
+  }, 1600);
+}
+
+/* ================= hjälp-timer ================= */
+function armHoldoff(){
+  clearTimeout(S.holdTimer);
+  if(!S.running || S.pos>=S.words.length) return;
+  S.holdTimer = setTimeout(()=>{
+    if(!S.running || S.speaking) return;
+    const el = document.querySelector(`.w[data-i="${S.pos}"]`);
+    if(el){ el.classList.remove('current'); el.classList.add('helping'); }
+    const w = S.words[S.pos];
+    setHint('Det här ordet är ' + w.raw);
+    noteHard(w.raw);
+    S.streak = 0;
+    speak(w.raw, 'word');
+    armHoldoff();
+  }, S.holdoff);
+}
+
+/* ================= tal ================= */
+/* Två hastigheter. Ett enskilt ord som ska ljudas ut behöver den långsamma
+   takten; uppmuntran och instruktioner däremellan låter sömniga i samma tempo
+   och körs därför snabbare. 'word' är standard eftersom det är den känsliga
+   användningen. */
+function speak(text, kind='word'){
+  if(!window.speechSynthesis) return;
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang='sv-SE';
+  u.rate = kind==='phrase' ? Math.min(1.8, S.rate * 1.28) : S.rate;
+  if(S.voice) u.voice=S.voice;
+  S.speaking=true;
+  micGate(true);
+  const release = ()=>{
+    clearTimeout(S.speakTimer);
+    S.speaking=false; micGate(false);
+  };
+  u.onend = release;
+  u.onerror = release;
+  /* Chrome missar ibland onend, särskilt efter cancel(). Utan den här
+     brytaren blir mikrofonen tystad för resten av sessionen. */
+  clearTimeout(S.speakTimer);
+  S.speakTimer = setTimeout(release, Math.min(15000, 1200 + text.length*120));
+  speechSynthesis.speak(u);
+}
+
+/* enkel half-duplex: strunta i igenkänning medan appen talar */
+let gated=false;
+function micGate(on){ gated=on; }
+
+/* ================= nivåmätare + röstansats ================= */
+let audioCtx=null, analyser=null, dataArr=null, rafId=null, wasLoud=false;
+let micStream=null;
+
+/* Strömmen begärs en gång per sidladdning och behålls. Vid paus suspenderas
+   bara ljudkontexten — spåren stoppas aldrig, så webbläsaren behöver inte
+   fråga om tillstånd igen. */
+async function ensureAudio(){
+  try{
+    if(!micStream){
+      micStream = await navigator.mediaDevices.getUserMedia({audio:{
+        echoCancellation:true, noiseSuppression:true, autoGainControl:true
+      }});
+    }
+    if(!audioCtx){
+      audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+      const src = audioCtx.createMediaStreamSource(micStream);
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 1024;
+      src.connect(analyser);
+      dataArr = new Uint8Array(analyser.fftSize);
+    }
+    if(audioCtx.state === 'suspended') await audioCtx.resume();
+    if(rafId) cancelAnimationFrame(rafId);
+    tick();
+    return true;
+  }catch(e){
+    showErr('Mikrofonen är inte tillgänglig: '+e.message+
+      ' — kör sidan via http://localhost i stället för att öppna filen direkt, '+
+      'så slipper du också tillståndsfrågan varje gång.');
+    return false;
+  }
+}
+
+function tick(){
+  analyser.getByteTimeDomainData(dataArr);
+  let sum=0;
+  for(let i=0;i<dataArr.length;i++){ const v=(dataArr[i]-128)/128; sum+=v*v; }
+  const rms = Math.sqrt(sum/dataArr.length);
+  const pct = Math.min(100, rms*420);
+  $('lvl').style.width = pct+'%';
+
+  const loud = rms > 0.022;
+  if(loud && !wasLoud && !gated && S.onsetAt===null){
+    S.onsetAt = performance.now();   // röstansats
+  }
+  wasLoud = loud;
+
+  // Skyddsnät: om han uppenbart läser men markören stått still länge har
+  // igenkännarsessionen troligen hamnat i ett tillstånd vi inte kan reda ut.
+  // Töm transkriptionen och börja om från nuvarande ord — positionen behålls.
+  const now = performance.now();
+  if(S.running && !S.speaking && loud
+     && now - S.posSince > S.holdoff * 2
+     && now - S.lastRescue > 8000){
+    S.lastRescue = now;
+    resetTranscript();
+  }
+
+  rafId = requestAnimationFrame(tick);
+}
+
+/* ================= taligenkänning ================= */
+let rec=null;
+
+function buildRecognizer(){
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if(!SR){
+    showErr('Den här webbläsaren saknar taligenkänning. Använd Chrome eller Edge.');
+    return null;
+  }
+  const r = new SR();
+  r.lang='sv-SE';
+  r.continuous=true;
+  r.interimResults=true;
+  r.maxAlternatives=1;
+
+  /* Varje ny session har en tom resultatlista, så tokenankaret måste nollställas.
+     Utan detta pekar S.hypConsumed in i en lista som inte finns längre och
+     alignmenten slutar tyst att flytta markören. */
+  r.onstart = ()=>{
+    S.ignoreResults = false;
+    S.hypConsumed = 0;
+  };
+
+  r.onresult = ev=>{
+    if(gated || S.ignoreResults) return;
+    let full='';
+    for(let i=0;i<ev.results.length;i++) full += ev.results[i][0].transcript+' ';
+    $('roHyp').textContent = full.trim().slice(-70) || '—';
+    applyAlign(tokens(full));
+  };
+  r.onerror = ev=>{
+    if(ev.error==='not-allowed') showErr('Mikrofonen blockerades. Tillåt åtkomst och försök igen.');
+    if(ev.error==='no-speech') return;
+  };
+  /* Chrome avslutar sessionen av sig själv vid tystnad. start() kastar om den
+     anropas för tidigt efter onend, och ett svalt undantag där dödar
+     igenkänningen permanent — därför försök igen några gånger. */
+  r.onend = ()=>{
+    if(!S.running) return;
+    const retry = n=>{
+      if(!S.running) return;
+      try{ r.start(); }
+      catch(e){ if(n>0) setTimeout(()=>retry(n-1), 160); }
+    };
+    retry(6);
+  };
+  return r;
+}
+
+/* ================= start / stopp ================= */
+async function start(){
+  const ok = await ensureAudio();
+  if(!ok) return;
+  if(!rec) rec = buildRecognizer();
+  if(!rec) return;
+  S.running=true;
+  S.lats=[];
+  try{ rec.start(); }catch(e){}
+  $('startBtn').classList.remove('primary');
+  $('startBtn').classList.add('live');
+  setIcons();
+  setHint('Läs högt. Jag följer med.');
+  speak('Läs högt, jag lyssnar.', 'phrase');
+  renderSentence(); renderTrack();
+  armHoldoff();
+}
+
+function stop(){
+  S.running=false;
+  clearTimeout(S.holdTimer);
+  if(rec){ try{ rec.stop(); }catch(e){} }
+  if(rafId){ cancelAnimationFrame(rafId); rafId=null; }
+  if(audioCtx && audioCtx.state === 'running') audioCtx.suspend().catch(()=>{});
+  wasLoud=false; S.onsetAt=null;
+  $('lvl').style.width='0%';
+  $('startBtn').classList.add('primary');
+  $('startBtn').classList.remove('live');
+  setIcons();
+  renderSentence(); renderTrack();
+}
+
+function showErr(msg){
+  const e=$('err'); e.textContent=msg; e.classList.add('show');
+  showTab('teknik');
+  $('sheet').classList.add('open');
+}
+
+/* ================= inställningar ================= */
+function buildPresets(){
+  const box=$('presets');
+  Object.keys(PRESETS).forEach(k=>{
+    const b=document.createElement('button');
+    b.className='chip';
+    b.innerHTML = k + ' <em>' + PRESETS[k].length + '</em>';
+    b.onclick=()=>{ $('txt').value = PRESETS[k].join('\n'); applyText(); };
+    box.appendChild(b);
+  });
+}
+function applyText(){
+  const lines = $('txt').value.split('\n').map(s=>s.trim()).filter(Boolean);
+  if(!lines.length) return;
+  S.lines=lines; S.line=0; loadLine();
+}
+
+/* Webbläsaren exponerar bara de röster som finns installerade i systemet.
+   På macOS följer bara Alva med från början — fler laddas ner under
+   Systeminställningar › Hjälpmedel › Talat innehåll › Hantera röster. */
+let allVoices = [];
+
+function loadVoices(){
+  const sel = $('voice');
+  allVoices = speechSynthesis.getVoices();
+  if(!allVoices.length) return;              // Chrome fyller listan asynkront
+
+  const lang = v => (v.lang||'').replace('_','-');
+  const sv    = allVoices.filter(v=> lang(v).toLowerCase().startsWith('sv'));
+  const other = allVoices.filter(v=> !lang(v).toLowerCase().startsWith('sv'));
+
+  const prev = S.voice && S.voice.name;
+  sel.innerHTML = '';
+
+  const addGroup = (label, list) => {
+    if(!list.length) return;
+    const g = document.createElement('optgroup');
+    g.label = label;
+    list.forEach(v=>{
+      const o = document.createElement('option');
+      o.value = v.name;
+      o.textContent = v.name + '  ·  ' + lang(v) + (v.localService ? '' : '  · nät');
+      g.appendChild(o);
+    });
+    sel.appendChild(g);
+  };
+
+  addGroup('Svenska (' + sv.length + ')', sv);
+  addGroup('Övriga språk — nödlösning', other);
+
+  const pick = allVoices.find(v=>v.name===prev) || sv[0] || allVoices[0];
+  S.voice = pick;
+  sel.value = pick.name;
+
+  $('voiceInfo').textContent = sv.length > 1
+    ? sv.length + ' svenska röster installerade'
+    : sv.length === 1
+      ? 'Bara en svensk röst installerad. Fler finns under Systeminställningar › Hjälpmedel › Talat innehåll › Hantera röster.'
+      : 'Ingen svensk röst hittad. Installera en under Systeminställningar › Hjälpmedel › Talat innehåll.';
+
+  sel.onchange = ()=>{
+    S.voice = allVoices.find(v=>v.name===sel.value) || null;
+    testVoice();
+  };
+}
+
+function testVoice(){
+  speak('Hej! Katten satt på mattan och tittade ut genom fönstret.', 'phrase');
+}
+
+/* ================= koppling ================= */
+$('startBtn').onclick = ()=>{ S.running ? stop() : start(); };
+$('nextBtn').onclick  = ()=>{
+  if(S.line < S.lines.length-1){ S.line++; } else { S.line=0; }
+  loadLine(); armHoldoff(); setHint('Ny mening. Läs när du vill.');
+};
+$('sayBtn').onclick = ()=>{
+  const w=S.words[S.pos]; if(w) speak(w.raw);
+};
+const TAB_SUB = {
+  text:    'Klistra in läsläxan, en mening per rad.',
+  lasning: 'Hur texten visas och hur mycket appen släpper igenom.',
+  rost:    'Hur appen låter när den läser upp ord och uppmuntran.',
+  teknik:  'Vad den här versionen kan och inte kan.'
+};
+
+function showTab(name){
+  document.querySelectorAll('.tab').forEach(t=>
+    t.setAttribute('aria-selected', String(t.dataset.tab===name)));
+  document.querySelectorAll('.tabpage').forEach(p=>
+    p.classList.toggle('active', p.dataset.page===name));
+  $('sheetSub').textContent = TAB_SUB[name] || '';
+  $('sheet').querySelector('.cardbody').scrollTop = 0;
+  if(name==='rost') loadVoices();
+}
+
+document.querySelectorAll('.tab').forEach(t=>{
+  t.onclick = ()=> showTab(t.dataset.tab);
+});
+
+$('cbOk').onchange   = e=>{ S.sndOk = e.target.checked; if(S.sndOk){ S.streak=0; playOk(); } };
+$('cbFail').onchange = e=>{ S.sndFail = e.target.checked; if(S.sndFail) playFail(); };
+$('rVol').oninput = e=>{
+  S.vol = +e.target.value/100;
+  $('vVol').textContent = e.target.value+' %';
+};
+$('rVol').onchange = ()=>{ S.streak=0; playOk(); };
+
+$('testVoiceBtn').onclick = testVoice;
+$('setupBtn').onclick = ()=>{ loadVoices(); $('sheet').classList.add('open'); };
+$('closeBtn').onclick = ()=>{ applyText(); $('sheet').classList.remove('open'); };
+$('sheet').onclick = e=>{ if(e.target===$('sheet')){ applyText(); $('sheet').classList.remove('open'); } };
+
+$('rSize').oninput = e=>{
+  document.documentElement.style.setProperty('--read-size', e.target.value+'px');
+  $('vSize').textContent = e.target.value+' px';
+};
+$('rHold').oninput = e=>{
+  S.holdoff = +e.target.value;
+  $('vHold').textContent = (S.holdoff/1000).toFixed(1).replace('.',',')+' s';
+  armHoldoff();
+};
+$('rRate').oninput = e=>{
+  S.rate = +e.target.value;
+  $('vRate').textContent = S.rate.toFixed(2).replace('.',',');
+};
+$('strict').onchange = e=>{ S.strict = e.target.value; };
+
+document.addEventListener('keydown', e=>{
+  if(e.key==='Escape' && $('sheet').classList.contains('open')){
+    applyText(); $('sheet').classList.remove('open'); return;
+  }
+  if($('sheet').classList.contains('open')) return;
+  if(e.code==='Space' && e.target===document.body){ e.preventDefault(); $('startBtn').click(); }
+});
+
+/* ================= init ================= */
+buildPresets();
+setIcons();
+$('txt').value = S.lines.join('\n');
+loadLine();
+if(window.speechSynthesis){
+  loadVoices();
+  speechSynthesis.onvoiceschanged = loadVoices;
+}
+</script>
+</body>
+</html>
