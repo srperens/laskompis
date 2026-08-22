@@ -3,6 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Läskompis">
+<meta name="theme-color" content="#E9EEF2">
 <title>Läskompis</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1040,6 +1043,24 @@ function speak(text, kind='word'){
   S.speakTimer = setTimeout(release, Math.min(15000, 1200 + text.length*120));
   speechSynthesis.speak(u);
 }
+
+/* iOS home-screen web apps (standalone mode) only allow speechSynthesis if
+   the first speak() happens synchronously inside a user gesture. start()
+   speaks after awaiting the microphone — too late there. Unlock with a
+   silent utterance on the very first touch/click instead. */
+function unlockSpeech(){
+  document.removeEventListener('touchend', unlockSpeech, true);
+  document.removeEventListener('click', unlockSpeech, true);
+  if(!window.speechSynthesis) return;
+  try{
+    speechSynthesis.resume();
+    const u = new SpeechSynthesisUtterance(' ');
+    u.volume = 0;
+    speechSynthesis.speak(u);
+  }catch(e){}
+}
+document.addEventListener('touchend', unlockSpeech, true);
+document.addEventListener('click', unlockSpeech, true);
 
 /* simple half-duplex: ignore recognition while the app is speaking */
 let gated=false;
