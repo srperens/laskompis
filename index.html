@@ -26,6 +26,8 @@
 
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
+/* dynamic viewport unit tracks mobile browsers' collapsing address bar */
+@supports (height:100dvh){ html,body{height:100dvh} }
 body{
   background:var(--paper);
   color:var(--ink);
@@ -91,15 +93,55 @@ body{
 .sbtn:hover{border-color:var(--rule);background:#fff}
 .sbtn.active{background:var(--mark);font-weight:700}
 .sbtn:focus-visible{outline:2px solid var(--good);outline-offset:2px}
-@media (max-width:760px){ .side{display:none} }
+/* On narrow screens the text list becomes a horizontal chip strip above the
+   reading area, and the adult-facing diagnostics give way to reading space. */
+@media (max-width:760px){
+  .top{gap:10px;padding:10px 12px}
+  .tbtn{padding:6px 8px;font-size:11px;letter-spacing:.02em}
+  .score b{font-size:19px}
+  .main{flex-direction:column}
+  .side{
+    width:auto;
+    flex-direction:row;gap:8px;
+    overflow-x:auto;overflow-y:hidden;
+    border-right:0;border-bottom:1px solid var(--rule);
+    padding:10px 12px;
+    -webkit-overflow-scrolling:touch;
+  }
+  .slabel{display:none}
+  .sbtn{
+    flex:0 0 auto;white-space:nowrap;
+    border:1px solid var(--rule);border-radius:18px;
+    background:#fff;
+    font-size:13px;padding:6px 12px;
+  }
+  .stage{padding:16px 5vw}
+  #sentence{line-height:1.7}
+  .hint{font-size:16px;min-height:26px;padding-bottom:6px}
+  .icon{width:62px;height:62px}
+  .icon svg{width:27px;height:27px}
+  .controls{gap:10px;padding:0 12px 12px}
+  .key{display:none}          /* keyboard hints are meaningless on touch */
+  .readouts{display:none}     /* diagnostics hidden — progress track stays */
+  .panel{padding:8px 12px 10px}
+  .track{height:14px}
+  .seg.current{height:14px}
+}
+@media (max-width:480px){
+  .wordmark{display:none}
+}
 .stage{
   flex:1 1 auto;
-  display:flex;align-items:center;justify-content:center;
+  display:flex;
   padding:40px 6vw;
   overflow-y:auto;
 }
+/* margin:auto instead of flex centering: a sentence taller than the stage
+   then scrolls normally instead of having its top clipped out of reach */
 #sentence{
-  font-size:var(--read-size);
+  margin:auto;
+  /* cap by viewport width so long words fit on narrow screens */
+  font-size:min(var(--read-size), 11vw);
   line-height:1.85;
   max-width:20ch;
   text-align:left;
