@@ -1024,7 +1024,9 @@ function armHoldoff(){
    sensitive use case. */
 function speak(text, kind='word'){
   if(!window.speechSynthesis) return;
-  speechSynthesis.cancel();
+  // only interrupt when something is actually queued — a gratuitous cancel()
+  // right before speak() can wedge the synthesizer on iOS
+  if(speechSynthesis.speaking || speechSynthesis.pending) speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
   u.lang='sv-SE';
   u.rate = kind==='phrase' ? Math.min(1.8, S.rate * 1.28) : S.rate;
@@ -1042,25 +1044,9 @@ function speak(text, kind='word'){
   clearTimeout(S.speakTimer);
   S.speakTimer = setTimeout(release, Math.min(15000, 1200 + text.length*120));
   speechSynthesis.speak(u);
+  // iOS sometimes leaves the synthesizer paused; resume() is a no-op elsewhere
+  speechSynthesis.resume();
 }
-
-/* iOS home-screen web apps (standalone mode) only allow speechSynthesis if
-   the first speak() happens synchronously inside a user gesture. start()
-   speaks after awaiting the microphone — too late there. Unlock with a
-   silent utterance on the very first touch/click instead. */
-function unlockSpeech(){
-  document.removeEventListener('touchend', unlockSpeech, true);
-  document.removeEventListener('click', unlockSpeech, true);
-  if(!window.speechSynthesis) return;
-  try{
-    speechSynthesis.resume();
-    const u = new SpeechSynthesisUtterance(' ');
-    u.volume = 0;
-    speechSynthesis.speak(u);
-  }catch(e){}
-}
-document.addEventListener('touchend', unlockSpeech, true);
-document.addEventListener('click', unlockSpeech, true);
 
 /* simple half-duplex: ignore recognition while the app is speaking */
 let gated=false;
@@ -1208,6 +1194,11 @@ function resetRecognition(){
 
 /* ================= start / stop ================= */
 async function start(){
+  /* Speak BEFORE any await: iOS home-screen web apps (standalone mode) only
+     allow the first speechSynthesis.speak() synchronously inside the user
+     gesture — after awaiting the microphone it is silently blocked. */
+  setHint('Läs högt, jag lyssnar.');
+  speak('Läs högt, jag lyssnar.', 'phrase');
   const ok = await ensureAudio();
   if(!ok) return;
   if(!rec) rec = buildRecognizer();
@@ -1218,8 +1209,6 @@ async function start(){
   $('startBtn').classList.remove('primary');
   $('startBtn').classList.add('live');
   setIcons();
-  setHint('Läs högt, jag lyssnar.');
-  speak('Läs högt, jag lyssnar.', 'phrase');
   renderSentence(); renderTrack();
   armHoldoff();
 }
