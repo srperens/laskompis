@@ -900,7 +900,7 @@ function align(hypTokens, fromWord, fromTok){
   return {states, pos:i, consumed, miscues};
 }
 
-function applyAlign(hypTokens){
+function applyAlign(hypTokens, isFinal=false){
   // The recognizer can at any time deliver a shorter token list than before —
   // on session restart, or when an interim result is replaced by a shorter
   // final result. If the anchor then points past the list the cursor stalls
@@ -910,8 +910,11 @@ function applyAlign(hypTokens){
 
   const {states,pos,consumed,miscues} = align(hypTokens, S.pos, S.hypConsumed);
 
-  // report misread attempts even when the cursor doesn't move
-  if(miscues.length){
+  // Report misread attempts even when the cursor doesn't move — but only on
+  // FINAL results. While a word is still being spoken the recognizer's
+  // interim guesses are all over the place, and judging those would punish
+  // words that end up correct once fully read.
+  if(miscues.length && isFinal){
     const m = miscues[miscues.length-1];
     if(m.at === S.pos){
       $('roHeard').textContent = m.heard + ' \u2260 ' + m.expected;
@@ -1143,7 +1146,7 @@ function buildRecognizer(){
     let full='';
     for(let i=0;i<ev.results.length;i++) full += ev.results[i][0].transcript+' ';
     $('roHyp').textContent = full.trim().slice(-70) || '—';
-    applyAlign(tokens(full));
+    applyAlign(tokens(full), ev.results[ev.results.length-1].isFinal);
   };
   r.onerror = ev=>{
     if(ev.error==='not-allowed') showErr('Mikrofonen blockerades. Tillåt åtkomst och försök igen.');
