@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Läskompis v0</title>
+<title>Läskompis</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -64,6 +64,34 @@ body{
 .tbtn:focus-visible{outline:2px solid var(--good);outline-offset:2px}
 
 /* ---------- reading stage ---------- */
+.main{
+  flex:1 1 auto;
+  display:flex;
+  min-height:0;
+}
+.side{
+  flex:0 0 auto;
+  width:190px;
+  border-right:1px solid var(--rule);
+  padding:18px 14px;
+  overflow-y:auto;
+  display:flex;flex-direction:column;gap:6px;
+}
+.side .slabel{
+  font-family:'JetBrains Mono',monospace;
+  font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--faded);margin-bottom:4px;
+}
+.sbtn{
+  font-family:'Atkinson Hyperlegible',sans-serif;
+  font-size:14px;text-align:left;
+  background:none;border:1px solid transparent;border-radius:4px;
+  color:var(--ink);padding:8px 10px;cursor:pointer;
+}
+.sbtn:hover{border-color:var(--rule);background:#fff}
+.sbtn.active{background:var(--mark);font-weight:700}
+.sbtn:focus-visible{outline:2px solid var(--good);outline-offset:2px}
+@media (max-width:760px){ .side{display:none} }
 .stage{
   flex:1 1 auto;
   display:flex;align-items:center;justify-content:center;
@@ -109,6 +137,11 @@ body{
   flex:0 0 auto;
   display:flex;justify-content:center;gap:12px;
   padding:0 24px 20px;
+}
+.ctl{display:flex;flex-direction:column;align-items:center;gap:7px}
+.key{
+  font-family:'JetBrains Mono',monospace;
+  font-size:11px;color:var(--faded);letter-spacing:.04em;
 }
 .icon{
   width:82px;height:82px;border-radius:50%;
@@ -259,20 +292,33 @@ select{font-size:15px;padding:9px;border:1px solid var(--rule);border-radius:4px
 <body>
 
 <div class="top">
-  <div class="wordmark">läskompis · v0</div>
+  <div class="wordmark">läskompis</div>
   <div class="top-spacer"></div>
   <div class="score" id="scoreBox"><b id="score">0</b></div>
+  <button class="tbtn" id="resetBtn" aria-label="Starta om lyssningen" title="Om markören har fastnat: starta om taligenkänningen. Position och poäng behålls.">Starta om lyssningen</button>
   <button class="tbtn" id="setupBtn" aria-label="Text och inställningar" title="Text och inställningar">Text &amp; inställningar</button>
 </div>
 
-<div class="stage"><div id="sentence"></div></div>
+<div class="main">
+  <nav class="side" id="side" aria-label="Färdiga texter"></nav>
+  <div class="stage"><div id="sentence"></div></div>
+</div>
 
 <div class="hint" id="hint">Tryck på Börja läsa när du är redo.</div>
 
 <div class="controls">
-  <button class="icon primary" id="startBtn" aria-label="Börja läsa" title="Börja läsa — mellanslag"></button>
-  <button class="icon" id="sayBtn" aria-label="Lyssna på ordet" title="Läs ordet åt mig"></button>
-  <button class="icon" id="nextBtn" aria-label="Nästa mening" title="Nästa mening"></button>
+  <div class="ctl">
+    <button class="icon primary" id="startBtn" aria-label="Börja läsa" title="Börja läsa — mellanslag"></button>
+    <div class="key">[mellanslag]</div>
+  </div>
+  <div class="ctl">
+    <button class="icon" id="sayBtn" aria-label="Lyssna på ordet" title="Läs ordet åt mig — L"></button>
+    <div class="key">[L]</div>
+  </div>
+  <div class="ctl">
+    <button class="icon" id="nextBtn" aria-label="Nästa mening" title="Nästa mening — högerpil"></button>
+    <div class="key">[&rarr;]</div>
+  </div>
 </div>
 
 <div class="panel">
@@ -300,9 +346,8 @@ select{font-size:15px;padding:9px;border:1px solid var(--rule);border-radius:4px
 
     <div class="tabs" role="tablist">
       <button class="tab" role="tab" data-tab="text"     aria-selected="true">Text</button>
-      <button class="tab" role="tab" data-tab="lasning"  aria-selected="false">Läsning</button>
-      <button class="tab" role="tab" data-tab="rost"     aria-selected="false">Röst</button>
-      <button class="tab" role="tab" data-tab="teknik"   aria-selected="false">Teknik</button>
+      <button class="tab" role="tab" data-tab="reading"  aria-selected="false">Läsning</button>
+      <button class="tab" role="tab" data-tab="voice"    aria-selected="false">Röst</button>
     </div>
 
     <div class="cardbody">
@@ -319,7 +364,7 @@ select{font-size:15px;padding:9px;border:1px solid var(--rule);border-radius:4px
         </div>
       </section>
 
-      <section class="tabpage" data-page="lasning">
+      <section class="tabpage" data-page="reading">
         <div class="field">
           <label>Textstorlek <span class="val" id="vSize">52 px</span></label>
           <input type="range" id="rSize" min="28" max="86" step="2" value="52">
@@ -333,12 +378,12 @@ select{font-size:15px;padding:9px;border:1px solid var(--rule);border-radius:4px
           <select id="strict">
             <option value="mild">Mild — släpper igenom nästan allt</option>
             <option value="normal" selected>Normal — kräver rätt begynnelsebokstav</option>
-            <option value="strang">Sträng — inga överhopp, nästan exakt match</option>
+            <option value="strict">Sträng — inga överhopp, nästan exakt match</option>
           </select>
         </div>
       </section>
 
-      <section class="tabpage" data-page="rost">
+      <section class="tabpage" data-page="voice">
         <div class="field">
           <label>Talhastighet — ord <span class="val" id="vRate">0,90</span></label>
           <input type="range" id="rRate" min="0.6" max="1.6" step="0.05" value="0.9">
@@ -354,8 +399,8 @@ select{font-size:15px;padding:9px;border:1px solid var(--rule);border-radius:4px
         <div class="field">
           <label>Ljud</label>
           <label class="check">
-            <input type="checkbox" id="cbOk" checked>
-            <span>Pling när ett ord blir rätt <em>tonen stiger vid flera rätt i rad</em></span>
+            <input type="checkbox" id="cbOk">
+            <span>Pling när ett ord blir rätt <em>avstängt som standard</em></span>
           </label>
           <label class="check">
             <input type="checkbox" id="cbFail">
@@ -368,24 +413,6 @@ select{font-size:15px;padding:9px;border:1px solid var(--rule);border-radius:4px
         </div>
       </section>
 
-      <section class="tabpage" data-page="teknik">
-        <p class="note">
-          Den här versionen använder webbläsarens egen taligenkänning för svenska.
-          Den är byggd för vuxenröster och lägger 300–800 ms i latens — tillräckligt
-          för att pröva om samspelet fungerar, inte för att bedöma hur bra
-          spårningen kan bli. Mätningen längst ner räknar tiden från att rösten
-          startar till att markören flyttar sig.
-        </p>
-        <p class="note">
-          Kör sidan via <b>http://localhost</b> i stället för att öppna filen direkt,
-          så slipper du frågan om mikrofonen varje gång:
-          <code>python3 -m http.server 8000</code> i mappen där filen ligger.
-        </p>
-        <p class="note">
-          Fler svenska röster laddas ner under Systeminställningar ›
-          Hjälpmedel › Talat innehåll › Hantera röster. Starta om webbläsaren efteråt.
-        </p>
-      </section>
     </div>
 
     <footer>
@@ -398,7 +425,7 @@ select{font-size:15px;padding:9px;border:1px solid var(--rule);border-radius:4px
 <script>
 'use strict';
 
-/* ================= texter ================= */
+/* ================= texts ================= */
 const PRESETS = {
 
   'Första orden': [
@@ -516,7 +543,7 @@ const PRESETS = {
   ]
 };
 
-/* ================= tillstånd ================= */
+/* ================= state ================= */
 const S = {
   lines: PRESETS['Meningar'].slice(),
   line: 0,
@@ -533,7 +560,7 @@ const S = {
   posSince: 0,
   hypConsumed: 0,
   lastRescue: 0,
-  sndOk: true,
+  sndOk: false,
   sndFail: false,
   vol: 0.85,
   streak: 0,
@@ -543,16 +570,16 @@ const S = {
   rate: 0.9,
   voice: null,
   lats: [],
-  onsetAt: null,    // tidsstämpel för röstansats
+  onsetAt: null,    // timestamp of voice onset
   holdTimer: null,
   speaking: false
 };
 
-/* ================= ljud ================= */
-/* Genereras i WebAudio, inga filer. Korta och lågmälda: ljudet ska bekräfta,
-   inte döma. Felljudet är därför en mjuk nedåtgående ton och avstängt som
-   standard — igenkännaren har fel ibland, och då blir en negativ signal
-   orättvis mot ett barn som faktiskt läste rätt. */
+/* ================= audio ================= */
+/* Generated with WebAudio, no files. Short and understated: the sound should
+   confirm, not judge. The failure sound is therefore a soft descending tone
+   and off by default — the recognizer mishears sometimes, and a negative
+   signal is then unfair to a child who actually read correctly. */
 let sfxCtx = null, sfxOut = null;
 
 function sfx(){
@@ -560,8 +587,8 @@ function sfx(){
   if(!sfxCtx){
     try{ sfxCtx = new (window.AudioContext||window.webkitAudioContext)(); }
     catch(e){ return null; }
-    // Kompressor sist i kedjan: tonerna summeras och skulle annars klippa
-    // när nivån är uppskruvad.
+    // Compressor last in the chain: the tones sum and would otherwise clip
+    // when the volume is turned up.
     const comp = sfxCtx.createDynamicsCompressor();
     comp.threshold.value = -10;
     comp.ratio.value = 8;
@@ -576,8 +603,8 @@ function sfx(){
   return sfxCtx;
 }
 
-/* Kort attack, kort platå, mjuk utklingning. Platån gör att ljudet uppfattas
-   som lika starkt som tal — ett rent blipp låter svagare än det mäter. */
+/* Short attack, short plateau, soft decay. The plateau makes the sound feel
+   as loud as speech — a pure blip sounds weaker than it measures. */
 function tone(freq, startAt, dur, peak, type='sine'){
   const ctx = sfx(); if(!ctx) return;
   const t = ctx.currentTime + startAt;
@@ -594,14 +621,12 @@ function tone(freq, startAt, dur, peak, type='sine'){
   osc.start(t); osc.stop(t + dur + 0.03);
 }
 
-/* Stigande tonhöjd med antalet rätt i rad — en belöningsgradient som inte
-   kräver att man kan läsa siffran uppe i hörnet. */
+/* The same happy chime every time — recognizable and reliable: hearing it
+   should feel like a small celebration of reading a word correctly. */
 function playOk(){
   if(!S.sndOk) return;
-  const step = Math.min(S.streak, 7);
-  const base = 880 * Math.pow(2, step/12);
-  tone(base, 0, 0.24, 0.55);
-  tone(base * 1.5, 0.05, 0.20, 0.30);
+  tone(1046.5, 0, 0.22, 0.55);
+  tone(1568, 0.05, 0.18, 0.30);
 }
 
 function playFail(){
@@ -617,9 +642,9 @@ function playDone(){
 
 const $ = id => document.getElementById(id);
 
-/* ================= symboler ================= */
-/* Gränssnittet ska gå att använda av någon som inte kan läsa ännu:
-   spela, lyssna, vidare. Texten finns kvar som aria-label och verktygstips. */
+/* ================= icons ================= */
+/* The interface must be usable by someone who cannot read yet:
+   play, listen, next. Text remains as aria-labels and tooltips. */
 const svg = (inner,fill) =>
   `<svg viewBox="0 0 24 24" aria-hidden="true" fill="${fill?'currentColor':'none'}">${inner}</svg>`;
 
@@ -645,7 +670,7 @@ function setIcons(){
   }
 }
 
-/* ================= normalisering ================= */
+/* ================= normalization ================= */
 function norm(w){
   return w.toLowerCase()
     .replace(/[.,!?;:"'“”„»«…\-–—()]/g,'')
@@ -655,7 +680,7 @@ function tokens(str){
   return str.split(/\s+/).map(norm).filter(Boolean);
 }
 
-/* likhet: normaliserad Levenshtein */
+/* similarity: normalized Levenshtein */
 function lev(a,b){
   if(a===b) return 0;
   const m=a.length,n=b.length;
@@ -677,35 +702,36 @@ function sim(a,b){
   return 1 - d/L;
 }
 
-/* Stränghetsnivåer.
-   budget = tillåtet antal teckenfel, beroende på ordlängd
-   first  = kräver att första bokstaven stämmer
-   skip   = hur många ord som får hoppas över framåt
-   dwell  = hur länge markören måste ha stått på ett ord innan det får
-            hoppas över. Utan detta går det att börja läsa mitt i meningen. */
+/* Strictness levels.
+   budget = allowed number of character errors, depending on word length
+   first  = requires the first letter to match
+   skip   = how many words may be skipped forward
+   dwell  = how long the cursor must have rested on a word before it may be
+            skipped. Without this you could start reading mid-sentence. */
 const STRICTNESS = {
   mild:   { budget:l=> l<=3?1 : l<=6?2 : 3, first:false, skip:2, dwell:700 },
   normal: { budget:l=> l<=3?0 : l<=6?1 : 2, first:true,  skip:1, dwell:1800 },
-  strang: { budget:l=> l<=4?0 : 1,          first:true,  skip:0, dwell:0 }
+  strict: { budget:l=> l<=4?0 : 1,          first:true,  skip:0, dwell:0 }
 };
 
-/* Ersätter den gamla toleranströskeln. Returnerar true/false, inte ett flyttal —
-   för korta ord finns ingen meningsfull gråzon. */
+/* Replaces the old tolerance threshold. Returns true/false, not a float —
+   for short words there is no meaningful gray zone. */
 function matches(hyp, ref){
   if(!hyp || !ref) return false;
   if(hyp === ref) return true;
   const rule = STRICTNESS[S.strict];
   if(rule.first && ref.length >= 4 && hyp[0] !== ref[0]) return false;
-  // stor längdskillnad = annat ord, inte uttalsvariant
+  // large length difference = different word, not a pronunciation variant
   if(Math.abs(hyp.length - ref.length) > rule.budget(ref.length)) return false;
   return lev(hyp, ref) <= rule.budget(ref.length);
 }
 
-/* ================= mening ================= */
-/* Igenkännaren ackumulerar resultat över hela sessionen. Vid meningsbyte måste
-   den listan tömmas, annars matchas gammalt tal mot den nya meningen — vanliga
-   småord som "och" eller "på" flyttar då markören utan att någon sagt något.
-   Enda pålitliga sättet att tömma den är att starta om sessionen. */
+/* ================= sentence ================= */
+/* The recognizer accumulates results across the whole session. On a sentence
+   change that list must be cleared, or old speech gets matched against the new
+   sentence — common short words like "och" or "på" then move the cursor without
+   anyone having said anything. The only reliable way to clear it is to restart
+   the session. */
 function resetTranscript(){
   S.onsetAt = null;
   S.hypConsumed = 0;
@@ -713,8 +739,8 @@ function resetTranscript(){
   $('roHyp').textContent = '—';
   $('roHeard').textContent = '—';
   if(S.running && rec){
-    S.ignoreResults = true;          // kasta allt som hinner komma före omstart
-    try{ rec.stop(); }catch(e){}     // onend startar om, onstart släpper spärren
+    S.ignoreResults = true;          // drop anything arriving before the restart
+    try{ rec.stop(); }catch(e){}     // onend restarts, onstart releases the latch
   }
 }
 
@@ -773,23 +799,22 @@ function setHint(txt, warm){
   h.className = 'hint' + (warm?' warm':'');
 }
 
-/* ================= alignment (girig token-passing) ================= */
-/* Körs om från meningens början vid varje resultat → idempotent mot
-   interimsuppdateringar. Tillåter överhoppade ord och utfyllnad. */
-/* Alignmenten förankras vid den bekräftade positionen. Tidigare replayades hela
-   meningen vid varje resultat, vilket gjorde den sårbar för att igenkännaren
-   skriver om text den redan levererat: ett omtolkat ord längre bak kunde låsa
-   markören för resten av meningen. Nu ligger avgjorda ord fast, och bara de ännu
-   inte förbrukade hypotesorden prövas mot orden från markören och framåt. */
+/* ================= alignment (greedy token passing) ================= */
+/* The alignment is anchored at the confirmed position. Previously the whole
+   sentence was replayed on every result, which made it vulnerable to the
+   recognizer rewriting text it had already delivered: a reinterpreted word
+   further back could lock the cursor for the rest of the sentence. Now settled
+   words stay fixed, and only the not-yet-consumed hypothesis tokens are tried
+   against the words from the cursor onward. */
 function align(hypTokens, fromWord, fromTok){
   let i=fromWord, j=fromTok;
   const states = S.words.map(w=>w.state);
   const miscues = [];
   const rule = STRICTNESS[S.strict];
 
-  // Hur många ord som totalt får passeras under det här passet. Noll tills
-  // markören stått kvar tillräckligt länge. Budgeten förbrukas, annars kan
-  // hopp kedjas ihop genom hela meningen.
+  // How many words may be passed over in total during this pass. Zero until
+  // the cursor has rested long enough. The budget is consumed, otherwise
+  // jumps could chain through the whole sentence.
   let budget = (performance.now() - S.posSince) >= rule.dwell ? rule.skip : 0;
   let consumed = j;
 
@@ -812,8 +837,8 @@ function align(hypTokens, fromWord, fromTok){
     }
     if(jumped) continue;
 
-    // hypotesordet hörde inte hit — notera det om det ligger nära nog
-    // att vara ett läsförsök på det aktuella ordet, inte bara brus
+    // the hypothesis token didn't belong here — note it if it is close enough
+    // to be a reading attempt at the current word, not just noise
     const ref = S.words[i].norm;
     if(h.length>1 && sim(h, ref) > 0.34){
       miscues.push({heard:h, expected:S.words[i].raw, at:i});
@@ -824,23 +849,23 @@ function align(hypTokens, fromWord, fromTok){
 }
 
 function applyAlign(hypTokens){
-  // Igenkännaren kan när som helst leverera en kortare tokenlista än förut —
-  // vid sessionsomstart, eller när ett interimsresultat ersätts av ett kortare
-  // slutresultat. Ligger ankaret då utanför listan står markören still för
-  // gott, så det måste fångas här.
+  // The recognizer can at any time deliver a shorter token list than before —
+  // on session restart, or when an interim result is replaced by a shorter
+  // final result. If the anchor then points past the list the cursor stalls
+  // for good, so it must be caught here.
   if(S.hypConsumed > hypTokens.length) S.hypConsumed = 0;
   $('roTok').textContent = S.hypConsumed + '/' + hypTokens.length;
 
   const {states,pos,consumed,miscues} = align(hypTokens, S.pos, S.hypConsumed);
 
-  // rapportera felläsningsförsök även när markören inte flyttar sig
+  // report misread attempts even when the cursor doesn't move
   if(miscues.length){
     const m = miscues[miscues.length-1];
     if(m.at === S.pos){
       $('roHeard').textContent = m.heard + ' \u2260 ' + m.expected;
       noteHard(m.expected);
-      // interimsresultat upprepar samma gissning många gånger i rad —
-      // ljud bara när försöket faktiskt är ett nytt
+      // interim results repeat the same guess many times in a row —
+      // only make a sound when the attempt is actually new
       const key = m.at + ':' + m.heard;
       const now = performance.now();
       if(key !== S.lastMiscueKey && now - S.lastMiscueAt > 600){
@@ -854,7 +879,7 @@ function applyAlign(hypTokens){
 
   if(pos <= S.pos) return false;
 
-  // latensmätning: från röstansats till första framflyttning
+  // latency measurement: from voice onset to first cursor advance
   if(S.onsetAt !== null){
     const lat = performance.now() - S.onsetAt;
     if(lat > 40 && lat < 4000){
@@ -907,7 +932,7 @@ function finishLine(){
   setTimeout(()=>{
     if(S.line < S.lines.length-1){ S.line++; loadLine(); setHint('Fortsätt när du vill.'); }
     else if(S.hard.size && !S.reviewing){
-      // repetera de ord som var svåra, ett i taget
+      // repeat the words that were hard, one at a time
       S.reviewing = true;
       S.lines = hardList(6);
       S.line = 0; loadLine();
@@ -923,7 +948,7 @@ function finishLine(){
   }, 1600);
 }
 
-/* ================= hjälp-timer ================= */
+/* ================= help timer ================= */
 function armHoldoff(){
   clearTimeout(S.holdTimer);
   if(!S.running || S.pos>=S.words.length) return;
@@ -940,11 +965,11 @@ function armHoldoff(){
   }, S.holdoff);
 }
 
-/* ================= tal ================= */
-/* Två hastigheter. Ett enskilt ord som ska ljudas ut behöver den långsamma
-   takten; uppmuntran och instruktioner däremellan låter sömniga i samma tempo
-   och körs därför snabbare. 'word' är standard eftersom det är den känsliga
-   användningen. */
+/* ================= speech ================= */
+/* Two speeds. A single word to be sounded out needs the slow pace;
+   encouragement and instructions in between sound sleepy at that tempo
+   and therefore run faster. 'word' is the default since it is the
+   sensitive use case. */
 function speak(text, kind='word'){
   if(!window.speechSynthesis) return;
   speechSynthesis.cancel();
@@ -960,24 +985,24 @@ function speak(text, kind='word'){
   };
   u.onend = release;
   u.onerror = release;
-  /* Chrome missar ibland onend, särskilt efter cancel(). Utan den här
-     brytaren blir mikrofonen tystad för resten av sessionen. */
+  /* Chrome sometimes misses onend, especially after cancel(). Without this
+     breaker the microphone stays muted for the rest of the session. */
   clearTimeout(S.speakTimer);
   S.speakTimer = setTimeout(release, Math.min(15000, 1200 + text.length*120));
   speechSynthesis.speak(u);
 }
 
-/* enkel half-duplex: strunta i igenkänning medan appen talar */
+/* simple half-duplex: ignore recognition while the app is speaking */
 let gated=false;
 function micGate(on){ gated=on; }
 
-/* ================= nivåmätare + röstansats ================= */
+/* ================= level meter + voice onset ================= */
 let audioCtx=null, analyser=null, dataArr=null, rafId=null, wasLoud=false;
 let micStream=null;
 
-/* Strömmen begärs en gång per sidladdning och behålls. Vid paus suspenderas
-   bara ljudkontexten — spåren stoppas aldrig, så webbläsaren behöver inte
-   fråga om tillstånd igen. */
+/* The stream is requested once per page load and kept. On pause only the
+   audio context is suspended — the tracks are never stopped, so the browser
+   doesn't have to ask for permission again. */
 async function ensureAudio(){
   try{
     if(!micStream){
@@ -1015,13 +1040,14 @@ function tick(){
 
   const loud = rms > 0.022;
   if(loud && !wasLoud && !gated && S.onsetAt===null){
-    S.onsetAt = performance.now();   // röstansats
+    S.onsetAt = performance.now();   // voice onset
   }
   wasLoud = loud;
 
-  // Skyddsnät: om han uppenbart läser men markören stått still länge har
-  // igenkännarsessionen troligen hamnat i ett tillstånd vi inte kan reda ut.
-  // Töm transkriptionen och börja om från nuvarande ord — positionen behålls.
+  // Safety net: if the child is clearly reading but the cursor has been
+  // still for a long time, the recognizer session has probably ended up in a
+  // state we can't untangle. Clear the transcript and start over from the
+  // current word — the position is kept.
   const now = performance.now();
   if(S.running && !S.speaking && loud
      && now - S.posSince > S.holdoff * 2
@@ -1033,7 +1059,7 @@ function tick(){
   rafId = requestAnimationFrame(tick);
 }
 
-/* ================= taligenkänning ================= */
+/* ================= speech recognition ================= */
 let rec=null;
 
 function buildRecognizer(){
@@ -1048,9 +1074,9 @@ function buildRecognizer(){
   r.interimResults=true;
   r.maxAlternatives=1;
 
-  /* Varje ny session har en tom resultatlista, så tokenankaret måste nollställas.
-     Utan detta pekar S.hypConsumed in i en lista som inte finns längre och
-     alignmenten slutar tyst att flytta markören. */
+  /* Every new session has an empty result list, so the token anchor must be
+     reset. Without this S.hypConsumed points into a list that no longer
+     exists and the alignment silently stops moving the cursor. */
   r.onstart = ()=>{
     S.ignoreResults = false;
     S.hypConsumed = 0;
@@ -1067,9 +1093,9 @@ function buildRecognizer(){
     if(ev.error==='not-allowed') showErr('Mikrofonen blockerades. Tillåt åtkomst och försök igen.');
     if(ev.error==='no-speech') return;
   };
-  /* Chrome avslutar sessionen av sig själv vid tystnad. start() kastar om den
-     anropas för tidigt efter onend, och ett svalt undantag där dödar
-     igenkänningen permanent — därför försök igen några gånger. */
+  /* Chrome ends the session on its own during silence. start() throws if
+     called too soon after onend, and a swallowed exception there kills
+     recognition permanently — hence a few retries. */
   r.onend = ()=>{
     if(!S.running) return;
     const retry = n=>{
@@ -1082,7 +1108,35 @@ function buildRecognizer(){
   return r;
 }
 
-/* ================= start / stopp ================= */
+/* Speech recognition can wedge itself in states we can't detect or undo —
+   the retry loop in onend can also give up for good after ~1 s of failures.
+   The reset button is the manual escape hatch: throw the whole recognizer
+   instance away and build a fresh one. Reading position and score are kept. */
+function resetRecognition(){
+  S.ignoreResults = true;
+  if(rec){
+    try{ rec.onend = null; rec.stop(); }catch(e){}  // detach onend so the old instance can't restart itself
+    rec = null;
+  }
+  S.onsetAt = null;
+  S.hypConsumed = 0;
+  wasLoud = false;
+  $('roHyp').textContent = '—';
+  $('roHeard').textContent = '—';
+  if(!S.running) return;
+  rec = buildRecognizer();
+  if(!rec) return;
+  // the old session may still be closing; retry until the new one starts
+  const tryStart = n=>{
+    if(!S.running || !rec) return;
+    try{ rec.start(); }catch(e){ if(n>0) setTimeout(()=>tryStart(n-1), 200); }
+  };
+  tryStart(10);
+  setHint('Nu lyssnar jag igen.');
+  armHoldoff();
+}
+
+/* ================= start / stop ================= */
 async function start(){
   const ok = await ensureAudio();
   if(!ok) return;
@@ -1094,7 +1148,7 @@ async function start(){
   $('startBtn').classList.remove('primary');
   $('startBtn').classList.add('live');
   setIcons();
-  setHint('Läs högt. Jag följer med.');
+  setHint('Läs högt, jag lyssnar.');
   speak('Läs högt, jag lyssnar.', 'phrase');
   renderSentence(); renderTrack();
   armHoldoff();
@@ -1116,36 +1170,68 @@ function stop(){
 
 function showErr(msg){
   const e=$('err'); e.textContent=msg; e.classList.add('show');
-  showTab('teknik');
+  showTab('text');
   $('sheet').classList.add('open');
 }
 
-/* ================= inställningar ================= */
+/* ================= settings ================= */
+function selectPreset(k){
+  $('txt').value = PRESETS[k].join('\n');
+  applyText();
+}
+
 function buildPresets(){
   const box=$('presets');
   Object.keys(PRESETS).forEach(k=>{
     const b=document.createElement('button');
     b.className='chip';
     b.innerHTML = k + ' <em>' + PRESETS[k].length + '</em>';
-    b.onclick=()=>{ $('txt').value = PRESETS[k].join('\n'); applyText(); };
+    b.onclick=()=>{ selectPreset(k); };
     box.appendChild(b);
   });
 }
+
+/* The same texts as quick buttons to the left of the reading area, so the
+   text can be switched without opening the settings. */
+function buildSide(){
+  const side=$('side');
+  const l=document.createElement('div');
+  l.className='slabel';
+  l.textContent='Texter';
+  side.appendChild(l);
+  Object.keys(PRESETS).forEach(k=>{
+    const b=document.createElement('button');
+    b.className='sbtn';
+    b.textContent=k;
+    b.dataset.preset=k;
+    b.onclick=()=>{ selectPreset(k); };
+    side.appendChild(b);
+  });
+}
+
+function markActivePreset(){
+  const cur = S.lines.join('\n');
+  document.querySelectorAll('.sbtn').forEach(b=>{
+    b.classList.toggle('active', PRESETS[b.dataset.preset].join('\n')===cur);
+  });
+}
+
 function applyText(){
   const lines = $('txt').value.split('\n').map(s=>s.trim()).filter(Boolean);
   if(!lines.length) return;
   S.lines=lines; S.line=0; loadLine();
+  markActivePreset();
 }
 
-/* Webbläsaren exponerar bara de röster som finns installerade i systemet.
-   På macOS följer bara Alva med från början — fler laddas ner under
-   Systeminställningar › Hjälpmedel › Talat innehåll › Hantera röster. */
+/* The browser only exposes the voices installed on the system. On macOS
+   only Alva ships by default — more can be downloaded under System Settings ›
+   Accessibility › Spoken Content › Manage Voices. */
 let allVoices = [];
 
 function loadVoices(){
   const sel = $('voice');
   allVoices = speechSynthesis.getVoices();
-  if(!allVoices.length) return;              // Chrome fyller listan asynkront
+  if(!allVoices.length) return;              // Chrome fills the list asynchronously
 
   const lang = v => (v.lang||'').replace('_','-');
   const sv    = allVoices.filter(v=> lang(v).toLowerCase().startsWith('sv'));
@@ -1190,7 +1276,7 @@ function testVoice(){
   speak('Hej! Katten satt på mattan och tittade ut genom fönstret.', 'phrase');
 }
 
-/* ================= koppling ================= */
+/* ================= wiring ================= */
 $('startBtn').onclick = ()=>{ S.running ? stop() : start(); };
 $('nextBtn').onclick  = ()=>{
   if(S.line < S.lines.length-1){ S.line++; } else { S.line=0; }
@@ -1201,9 +1287,8 @@ $('sayBtn').onclick = ()=>{
 };
 const TAB_SUB = {
   text:    'Klistra in läsläxan, en mening per rad.',
-  lasning: 'Hur texten visas och hur mycket appen släpper igenom.',
-  rost:    'Hur appen låter när den läser upp ord och uppmuntran.',
-  teknik:  'Vad den här versionen kan och inte kan.'
+  reading: 'Hur texten visas och hur mycket appen släpper igenom.',
+  voice:   'Hur appen låter när den läser upp ord och uppmuntran.'
 };
 
 function showTab(name){
@@ -1213,7 +1298,7 @@ function showTab(name){
     p.classList.toggle('active', p.dataset.page===name));
   $('sheetSub').textContent = TAB_SUB[name] || '';
   $('sheet').querySelector('.cardbody').scrollTop = 0;
-  if(name==='rost') loadVoices();
+  if(name==='voice') loadVoices();
 }
 
 document.querySelectorAll('.tab').forEach(t=>{
@@ -1228,6 +1313,7 @@ $('rVol').oninput = e=>{
 };
 $('rVol').onchange = ()=>{ S.streak=0; playOk(); };
 
+$('resetBtn').onclick = resetRecognition;
 $('testVoiceBtn').onclick = testVoice;
 $('setupBtn').onclick = ()=>{ loadVoices(); $('sheet').classList.add('open'); };
 $('closeBtn').onclick = ()=>{ applyText(); $('sheet').classList.remove('open'); };
@@ -1253,14 +1339,19 @@ document.addEventListener('keydown', e=>{
     applyText(); $('sheet').classList.remove('open'); return;
   }
   if($('sheet').classList.contains('open')) return;
-  if(e.code==='Space' && e.target===document.body){ e.preventDefault(); $('startBtn').click(); }
+  if(e.target!==document.body) return;
+  if(e.code==='Space'){ e.preventDefault(); $('startBtn').click(); }
+  else if(e.key==='l' || e.key==='L'){ $('sayBtn').click(); }
+  else if(e.key==='ArrowRight'){ $('nextBtn').click(); }
 });
 
 /* ================= init ================= */
 buildPresets();
+buildSide();
 setIcons();
 $('txt').value = S.lines.join('\n');
 loadLine();
+markActivePreset();
 if(window.speechSynthesis){
   loadVoices();
   speechSynthesis.onvoiceschanged = loadVoices;

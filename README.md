@@ -6,10 +6,12 @@ En webbapp för barn som övar på att läsa högt. Barnet läser en mening ord 
 
 ## Så fungerar det
 
-- Klistra in läsläxan under **Text & inställningar** (en mening per rad), eller välj en av de färdiga texterna.
+- Välj en av de färdiga texterna i listan till vänster, eller klistra in läsläxan under **Text & inställningar** (en mening per rad).
 - Tryck på play-knappen och läs högt. Det gula ordet är det som ska läsas.
 - Öra-knappen läser upp det aktuella ordet. Du kan också klicka på vilket ord som helst i meningen för att höra det.
 - Pil-knappen hoppar till nästa mening.
+- Tangentbord: **mellanslag** = start/paus, **L** = lyssna på ordet, **högerpil** = nästa mening.
+- Om markören fastnar trots att barnet läser rätt: **Starta om lyssningen** uppe till höger bygger om taligenkänningen utan att position eller poäng går förlorade.
 
 Under **Läsning** går det att ställa in textstorlek, hur länge appen väntar innan den hjälper till, och hur strikt den bedömer uttalet. Under **Röst** väljs uppläsningsröst, talhastighet och ljudeffekter.
 
@@ -41,4 +43,4 @@ python3 -m http.server 8000
 
 ## Status
 
-Detta är en tidig prototyp (v0). Webbläsarens taligenkänning är byggd för vuxenröster och har märkbar latens — tillräckligt bra för att pröva om samspelet fungerar, inte ett mått på hur bra spårningen kan bli.
+Detta är en tidig prototyp. Webbläsarens taligenkänning är byggd för vuxenröster och har märkbar latens — tillräckligt bra för att pröva om samspelet fungerar, inte ett mått på hur bra spårningen kan bli.
