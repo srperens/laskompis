@@ -12,24 +12,56 @@ En webbapp för barn som övar på att läsa högt. Barnet läser en mening ord 
 - Pil-knappen hoppar till nästa mening.
 - Tangentbord: **mellanslag** = start/paus, **L** = lyssna på ordet, **högerpil** = nästa mening.
 - Om markören fastnar trots att barnet läser rätt: **Starta om lyssningen** uppe till höger bygger om taligenkänningen utan att position eller poäng går förlorade.
+- Texten, meningen man var på, poängen och inställningarna finns kvar nästa gång appen öppnas. Veckans läsläxa behöver alltså bara klistras in en gång.
 
 Under **Läsning** går det att ställa in textstorlek, hur länge appen väntar innan den hjälper till, och hur strikt den bedömer uttalet. Under **Röst** väljs uppläsningsröst, talhastighet och ljudeffekter.
 
-Panelen längst ner visar teknisk mätdata (latens, igenkända ord, svåra ord) — den är till för den vuxne, inte barnet.
+Panelen längst ner visar teknisk mätdata (latens, igenkända ord, svåra ord) — den är till för den vuxne, inte barnet. På små skärmar är den dold.
+
+## Flera barn på samma enhet
+
+Knappen med figuren uppe till höger visar vem som läser. Under **Text & inställningar › Barn** lägger man till fler barn, byter mellan dem och ser hur det har gått.
+
+Varje barn har egna inställningar, egen text, egen läsposition, egna poäng och en egen lista över ord som har varit svåra över tid. Vid byte laddas allt det om.
+
+Allt sparas i webbläsarens `localStorage` på just den enheten — appen har ingen server och skickar ingenting vidare. Det innebär också att webbläsaren får slänga det: Safari på iPhone rensar sparad data efter ungefär en veckas inaktivitet för sajter som inte är sparade på hemskärmen. Lägg appen på hemskärmen, eller ta ut en kopia under **Säkerhetskopia** i samma vy, så finns progressen kvar.
+
+## Bättre röster
+
+Appen använder de röster webbläsaren råkar erbjuda, och kvaliteten skiljer sig kraftigt. Listan under **Text & inställningar › Röst** visar vad som finns just nu, och där står instruktionen för det system du sitter på. Här är alla:
+
+| System | Så installerar du fler svenska röster |
+| --- | --- |
+| **macOS** | Systeminställningar › Hjälpmedel › Uppläsning och tal › Systemröst › **Hantera röster…** → Svenska. De märkta *(Premium)* låter klart bäst — gratis, men stora nedladdningar. Menyn hette **Talat innehåll** före macOS 26. |
+| **iPhone / iPad** | Inställningar › Hjälpmedel › Uppläsning och tal › **Röster** › Svenska → nedladdningsikonen vid *Alva* eller *Klara*, välj Premium om den finns. Menyn hette **Talat innehåll** före iOS 26. |
+| **Windows** | Inställningar › Tid och språk › Tal › **Hantera röster** › **Lägg till röster** → Svenska. |
+| **Android** | Inställningar › Tillgänglighet › Text till tal › kugghjulet vid motorn › **Installera röstdata** › Svenska. På vissa telefoner ligger den under System › Språk och inmatning. Starta om webbläsaren efteråt. |
+| **ChromeOS** | Inställningar › Tillgänglighet › Text till tal › **Röstinställningar för Text till tal** → slå på *Använd en naturlig röst när enheten är online*. |
+| **Linux** | Systemets talsyntes, speech-dispatcher med espeak-ng eller mbrola. Låter robotaktigt — Chromes nätröster är ett bättre spår. |
+
+Webbläsaren avgör lika mycket som systemet:
+
+- **Chrome** lägger till Googles nätröster utöver systemets — *Google svenska* i listan. Kräver internet, kräver ingen installation.
+- **Edge** har egna svenska neuronröster märkta *Online (Natural)*. På Windows är det den enklaste vägen till en bra svensk röst — systemets egen heter *Microsoft Bengt* och är den enda som går att installera.
+- **Safari** visar bara röster som är installerade i systemet. Har du precis installerat en måste sidan laddas om innan den syns.
+- **Firefox** kan läsa upp men saknar taligenkänning, så appen kan inte lyssna där.
 
 ## Teknik
 
 Allt är en enda HTML-fil utan beroenden eller byggsteg. Appen använder webbläsarens inbyggda API:er:
 
 - **Web Speech API (SpeechRecognition)** för taligenkänning på svenska. Fungerar i Chrome och Edge, och i Safari på iOS/macOS (via Apples taligenkänning, kräver att diktering är påslagen). Firefox saknar stöd.
-- **SpeechSynthesis** för uppläsning av ord och uppmuntran. Fler svenska röster kan installeras via systemets talinställningar.
+- **SpeechSynthesis** för uppläsning av ord och uppmuntran. Vilka röster som finns beror på system och webbläsare — se [Bättre röster](#bättre-röster).
 - **Web Audio API** för ljudeffekter och nivåmätaren.
+- **localStorage** för profiler, inställningar och progress. En enda nyckel, `laskompis:v1`, inget nätverk inblandat.
 
 Ordmatchningen görs med en girig token-alignment mot transkriptionen, med Levenshtein-avstånd och konfigurerbar stränghet, så att rimliga uttalsvariationer släpps igenom.
 
 ### Om integritet
 
-Chromes taligenkänning skickar ljudet till Googles servrar för transkribering — ljudet behandlas alltså inte enbart lokalt. I Safari används Apples taligenkänning, som ofta körs direkt på enheten. Inget sparas av appen själv; den har ingen backend och lagrar ingenting.
+Chromes taligenkänning skickar ljudet till Googles servrar för transkribering — ljudet behandlas alltså inte enbart lokalt. I Safari används Apples taligenkänning, som ofta körs direkt på enheten.
+
+Appen själv har ingen backend och skickar ingenting någonstans. Det som sparas — profiler, inställningar, texter, poäng och svåra ord — ligger kvar i webbläsarens `localStorage` på enheten, och går att ta bort under **Text & inställningar › Barn**.
 
 ## Köra lokalt
 
