@@ -2,11 +2,16 @@
 <html lang="sv">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Läskompis">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="theme-color" content="#E9EEF2">
 <title>Läskompis</title>
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="icon" href="./icon-192.png" sizes="192x192" type="image/png">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -41,7 +46,8 @@ body{
 /* ---------- top bar ---------- */
 .top{
   display:flex;align-items:center;gap:20px;
-  padding:14px 24px;
+  /* standalone on iOS puts the page under the status bar; env() is 0 elsewhere */
+  padding:calc(14px + env(safe-area-inset-top)) 24px 14px;
   border-bottom:1px solid var(--rule);
   flex:0 0 auto;
 }
@@ -127,7 +133,7 @@ body{
   .panel .readouts{display:none}  /* diagnostics hidden — progress track stays.
        Needs the extra specificity: the .readouts display:flex rule further
        down the file would otherwise win on source order. */
-  .panel{padding:8px 12px 10px}
+  .panel{padding:8px 12px calc(10px + env(safe-area-inset-bottom))}
   .track{height:14px}
   .seg.current{height:14px}
 }
@@ -223,7 +229,8 @@ body{
   color:var(--panel-ink);
   font-family:'JetBrains Mono',monospace;
   font-size:11px;
-  padding:12px 24px 14px;
+  /* keeps the progress track clear of the iPhone home indicator in standalone */
+  padding:12px 24px calc(14px + env(safe-area-inset-bottom));
   display:flex;flex-direction:column;gap:10px;
 }
 .track{
@@ -407,6 +414,18 @@ select{font-size:15px;padding:9px;border:1px solid var(--rule);border-radius:4px
   font-family:'JetBrains Mono',monospace;font-size:12.5px;
   color:var(--ink);line-height:1.6;margin-bottom:7px;
 }
+.note p + p{margin-top:8px}
+.note .openrow{display:flex;gap:11px;align-items:center;flex-wrap:wrap;margin-top:11px}
+.note .openrow .tbtn{
+  flex:0 0 auto;display:inline-block;text-decoration:none;
+  font-family:'JetBrains Mono',monospace;font-size:12px;letter-spacing:.06em;
+  background:#fff;border:1px solid var(--rule);border-radius:2px;
+  color:var(--ink);padding:7px 12px;cursor:pointer;
+}
+.note .openrow .tbtn:hover{border-color:var(--ink)}
+.note .openrow span{font-size:12.5px;color:var(--faded);line-height:1.45}
+.note .manual{font-size:12.5px;color:var(--faded)}
+
 details.osnote{margin-top:14px}
 details.osnote > summary{
   font-family:'JetBrains Mono',monospace;font-size:11px;
@@ -596,6 +615,11 @@ details.osnote > div{margin-top:14px}
         </div>
 
         <div class="field">
+          <label>Spara appen på enheten</label>
+          <div class="note" id="installNote"></div>
+        </div>
+
+        <div class="field">
           <label>Säkerhetskopia</label>
           <textarea id="backup" placeholder="Tryck på Visa kopia för att få ut all sparad data som text. Klistra in en tidigare kopia här och tryck Läs in kopia för att återställa." spellcheck="false"></textarea>
           <div class="btnrow">
@@ -603,9 +627,8 @@ details.osnote > div{margin-top:14px}
             <button class="tbtn" id="importBtn">Läs in kopia</button>
           </div>
           <p class="msg" id="kidMsg"></p>
-          <p class="vinfo">Webbläsaren kan rensa sparad data av sig själv — Safari på iPhone
-          gör det efter ungefär en veckas inaktivitet för vanliga sajter. Spara appen på
-          hemskärmen, eller lägg undan en kopia här, så finns progressen kvar.</p>
+          <p class="vinfo">En kopia i text är enda sättet att flytta progressen till en
+          annan enhet — och det som gäller om den sparade datan ändå försvinner.</p>
         </div>
       </section>
 
@@ -1374,6 +1397,10 @@ function buildRecognizer(){
   r.onerror = ev=>{
     if(ev.error==='not-allowed') showErr('Mikrofonen blockerades. Tillåt åtkomst och försök igen.');
     if(ev.error==='no-speech') return;
+    /* The app starts without a network now that it can be installed, but
+       Chrome's recognizer transcribes server-side and simply fails. Say so
+       rather than letting the cursor sit still for no visible reason. */
+    if(ev.error==='network') setHint('Taligenkänningen behöver internet just nu.', true);
   };
   /* Chrome ends the session on its own during silence. start() throws if
      called too soon after onend, and a swallowed exception there kills
@@ -1616,27 +1643,34 @@ const VOICE_HELP = {
   mac: {
     name: 'macOS',
     path: 'Systeminställningar › Hjälpmedel › Uppläsning och tal › Systemröst › Hantera röster…',
-    body: 'Välj Svenska i listan till vänster och ladda ner en röst. De som är märkta <b>(Premium)</b> låter klart bäst — de är gratis men stora, så ladda över wifi. Menyn hette <b>Talat innehåll</b> före macOS 26.'
+    body: 'Välj Svenska och ladda ner <b>Alva (Premium)</b> — den är gratis, låter klart bäst av de svenska, och är den appen ska använda. Nedladdningen är stor, så ta den över wifi. Menyn hette <b>Talat innehåll</b> före macOS 26.',
+    open: 'x-apple.systempreferences:com.apple.Accessibility-Settings.extension',
+    openLabel: 'Öppna Hjälpmedel'
   },
   ios: {
     name: 'iPhone och iPad',
     path: 'Inställningar › Hjälpmedel › Uppläsning och tal › Röster › Svenska',
-    body: 'Tryck på nedladdningsikonen vid <b>Alva</b> eller <b>Klara</b>, och välj Premium om den finns. Menyn hette <b>Talat innehåll</b> före iOS 26.'
+    body: 'Tryck på nedladdningsikonen vid <b>Alva</b> och välj <b>Premium</b> om den erbjuds — det är den bästa svenska rösten, och den är gratis. <b>Klara</b> är alternativet. Menyn hette <b>Talat innehåll</b> före iOS 26.',
+    manual: 'iOS låter inte en webbsida öppna Inställningar, så den biten får du gå själv.'
   },
   win: {
     name: 'Windows',
     path: 'Inställningar › Tid och språk › Tal › Hantera röster › Lägg till röster',
-    body: 'Välj Svenska och tryck Lägg till. Windows enda svenska systemröst heter <b>Microsoft Bengt</b>. Vill du ha något bättre är <b>Microsoft Edge</b> genvägen: Edge har svenska neuronröster inbyggda som dyker upp i listan ovan märkta <b>Online (Natural)</b>, helt utan installation.'
+    body: 'Välj Svenska och tryck Lägg till. Windows enda svenska systemröst heter <b>Microsoft Bengt</b>. Vill du ha något bättre är <b>Microsoft Edge</b> genvägen: Edge har svenska neuronröster inbyggda som dyker upp i listan ovan märkta <b>Online (Natural)</b>, helt utan installation.',
+    open: 'ms-settings:speech',
+    openLabel: 'Öppna röstinställningarna'
   },
   android: {
     name: 'Android',
     path: 'Inställningar › Tillgänglighet › Text till tal › kugghjulet vid motorn › Installera röstdata › Svenska',
-    body: 'Motorn heter <b>Taligenkänning och talsyntes från Google</b>. På vissa telefoner ligger inställningen under Inställningar › System › Språk och inmatning i stället. Starta om webbläsaren efter nedladdningen.'
+    body: 'Motorn heter <b>Taligenkänning och talsyntes från Google</b>. På vissa telefoner ligger inställningen under Inställningar › System › Språk och inmatning i stället. Starta om webbläsaren efter nedladdningen.',
+    manual: 'Android släpper inte in webbsidor i systeminställningarna, så den biten får du gå själv.'
   },
   cros: {
     name: 'ChromeOS',
     path: 'Inställningar › Tillgänglighet › Text till tal › Röstinställningar för Text till tal',
-    body: 'Välj en svensk röst och slå på <b>Använd en naturlig röst när enheten är online</b>.'
+    body: 'Välj en svensk röst och slå på <b>Använd en naturlig röst när enheten är online</b>.',
+    manual: 'Webbsidor får inte länka till chrome://-sidor, så den biten får du gå själv.'
   },
   other: {
     name: 'Linux och övriga',
@@ -1679,10 +1713,20 @@ const BROWSER_NOTE = {
 
 function renderVoiceHelp(){
   const os = detectOS();
+  /* Only two platforms let a web page open the right settings page: macOS
+     through x-apple.systempreferences: and Windows through the documented
+     ms-settings: scheme. iOS blocks it (App-Prefs is private API), Android
+     requires the target activity to be BROWSABLE and Settings is not, and
+     chrome:// pages can't be linked at all. Where it can't work the written
+     path is all there is, and saying so beats a button that does nothing. */
   const card = h =>
     '<h4>Fler röster — ' + h.name + '</h4>' +
     '<p class="path">' + h.path + '</p>' +
-    '<p>' + h.body + '</p>';
+    '<p>' + h.body + '</p>' +
+    (h.open
+      ? '<p class="openrow"><a class="tbtn" href="' + h.open + '">' + h.openLabel + '</a>' +
+        '<span>Webbläsaren frågar först om den får öppna inställningarna.</span></p>'
+      : (h.manual ? '<p class="manual">' + h.manual + '</p>' : ''));
   $('voiceBrowser').innerHTML = BROWSER_NOTE[detectBrowser()] || BROWSER_NOTE.other;
   $('voiceHelp').innerHTML = card(VOICE_HELP[os] || VOICE_HELP.other);
   $('voiceAll').innerHTML = Object.keys(VOICE_HELP)
@@ -1912,6 +1956,62 @@ function kidMsg(text, bad){
   kidMsgTimer = setTimeout(()=>{ el.textContent = ''; }, 7000);
 }
 
+/* ================= install as an app ================= */
+/* This earns its own place in the Barn tab: an installed app is what keeps
+   the saved profiles safe from Safari's habit of clearing storage for sites
+   nobody has opened in a week. */
+let installPrompt = null;
+
+function isInstalled(){
+  return matchMedia('(display-mode: standalone)').matches ||
+         matchMedia('(display-mode: fullscreen)').matches ||
+         navigator.standalone === true;
+}
+
+function renderInstall(){
+  const el = $('installNote');
+  if(!el) return;
+
+  if(isInstalled()){
+    el.innerHTML = '<p>Appen är sparad på enheten. Den startar direkt, tar hela skärmen — och den sparade progressen ligger kvar även efter en läspaus.</p>';
+    return;
+  }
+
+  /* Chrome hands us the install prompt; nobody else does. */
+  if(installPrompt){
+    el.innerHTML =
+      '<p>Sparad på enheten startar appen direkt och tar hela skärmen, och progressen skyddas från att webbläsaren rensar lagringen.</p>' +
+      '<p class="openrow"><button class="tbtn" id="installBtn">Lägg till på enheten</button></p>';
+    $('installBtn').onclick = async ()=>{
+      const prompt = installPrompt;
+      installPrompt = null;              // the event is single-use
+      try{ await prompt.prompt(); await prompt.userChoice; }catch(e){}
+      renderInstall();
+    };
+    return;
+  }
+
+  el.innerHTML = detectOS()==='ios'
+    ? '<p>Tryck på <b>Dela</b>-ikonen och välj <b>Lägg till på hemskärmen</b>. På iPhone är det också det enda som skyddar den sparade progressen — Safari rensar annars lagringen efter ungefär en veckas inaktivitet.</p>'
+    : '<p>Spara appen via webbläsarens meny — <b>Installera app</b> eller <b>Lägg till på hemskärmen</b>. Då startar den direkt och progressen ligger kvar.</p>';
+}
+
+window.addEventListener('beforeinstallprompt', e=>{
+  e.preventDefault();          // keep the browser's own bar out of the child's way
+  installPrompt = e;
+  renderInstall();
+});
+window.addEventListener('appinstalled', ()=>{ installPrompt = null; renderInstall(); });
+
+/* The service worker is what makes the app installable and lets it start
+   without a network. Best-effort: a failure here must never take the reading
+   app down with it. */
+if('serviceWorker' in navigator && window.isSecureContext){
+  window.addEventListener('load', ()=>{
+    navigator.serviceWorker.register('./sw.js').catch(()=>{});
+  });
+}
+
 function initStore(){
   let raw = null;
   try{ raw = JSON.parse(localStorage.getItem(STORE_KEY) || 'null'); }catch(e){}
@@ -1957,7 +2057,7 @@ function showTab(name){
   $('sheetSub').textContent = TAB_SUB[name] || '';
   $('sheet').querySelector('.cardbody').scrollTop = 0;
   if(name==='voice') loadVoices();
-  if(name==='kids'){ renderKids(); buildAvatars(); }
+  if(name==='kids'){ renderKids(); buildAvatars(); renderInstall(); }
 }
 
 document.querySelectorAll('.tab').forEach(t=>{
@@ -2138,6 +2238,7 @@ buildSide();
 buildAvatars();
 setIcons();
 renderVoiceHelp();
+renderInstall();
 initStore();
 applyProfile(profile());   // sets the text, the position, the settings and the voice
 if(window.speechSynthesis){
