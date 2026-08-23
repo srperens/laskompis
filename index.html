@@ -64,6 +64,20 @@ body{
 }
 .score svg{width:20px;height:20px;color:var(--mark)}
 .score b{font-size:24px;color:var(--good);font-weight:500;font-variant-numeric:tabular-nums}
+/* ---------- reading clock ---------- */
+.clock{
+  display:flex;align-items:baseline;gap:5px;
+  font-family:'JetBrains Mono',monospace;
+  font-size:19px;font-variant-numeric:tabular-nums;
+  background:none;border:0;padding:0;cursor:pointer;
+  color:var(--faded);
+  white-space:nowrap;flex:0 0 auto;   /* "2:14 / 5:00" must stay on one line */
+}
+.clock.live{color:var(--ink)}
+.clock.done{color:var(--good)}
+.clock .goal{font-size:12px;color:var(--faded)}
+.clock:focus-visible{outline:2px solid var(--good);outline-offset:3px}
+
 .tbtn{
   font-family:'JetBrains Mono',monospace;font-size:12px;
   letter-spacing:.06em;
@@ -331,6 +345,7 @@ select{font-size:15px;padding:9px;border:1px solid var(--rule);border-radius:4px
   font-size:11px;color:var(--faded);margin-left:5px;
 }
 .chip:hover{border-color:var(--ink)}
+.chip.on{background:var(--mark);border-color:var(--mark);font-weight:700}
 .chip:focus-visible{outline:2px solid var(--good);outline-offset:2px}
 .note{
   font-size:14px;color:var(--faded);line-height:1.6;
@@ -442,6 +457,8 @@ details.osnote > div{margin-top:14px}
   .pbtn .nm{display:none}
   .pbtn{padding:5px 9px;gap:0}
   .stats{gap:16px}
+  .clock{font-size:17px}
+  .clock .goal{font-size:11px}
 }
 </style>
 </head>
@@ -453,6 +470,10 @@ details.osnote > div{margin-top:14px}
   <button class="pbtn" id="profBtn" aria-label="Byt barn"
           title="Byt barn — varje barn har egna inställningar, egen text och egen progress">
     <span class="av" id="profAv">🦊</span><span class="nm" id="profNm">Barn</span>
+  </button>
+  <button class="clock" id="clockBox" aria-label="Lästid"
+          title="Tid barnet har läst. Klicka för att nollställa.">
+    <span id="clockNow">0:00</span><span class="goal" id="clockGoal"></span>
   </button>
   <div class="score" id="scoreBox"><b id="score">0</b></div>
   <button class="tbtn" id="resetBtn" aria-label="Starta om lyssningen" title="Om markören har fastnat: starta om taligenkänningen. Position och poäng behålls.">Starta om lyssningen</button>
@@ -541,6 +562,13 @@ details.osnote > div{margin-top:14px}
             <option value="normal" selected>Normal — kräver rätt begynnelsebokstav</option>
             <option value="strict">Sträng — inga överhopp, nästan exakt match</option>
           </select>
+        </div>
+        <div class="field">
+          <label>Läs så här länge</label>
+          <div class="presets" id="targets"></div>
+          <p class="vinfo">Klockan uppe till höger räknar bara medan barnet läser — pausen
+          räknas inte. När tiden är slut tar appen paus av sig själv, och nästa gång du
+          trycker på play börjar ett nytt pass.</p>
         </div>
       </section>
 
@@ -798,7 +826,17 @@ const S = {
   holdTimer: null,
   finishTimer: null,
   starting: false,
-  speaking: false
+  speaking: false,
+
+  /* Reading time is accumulated from timestamps rather than counted up by the
+     interval, so a throttled or backgrounded tab can't lose or gain seconds.
+     timeMs is what has been banked while paused; runSince marks the start of
+     the stretch currently running. */
+  timeMs: 0,
+  runSince: null,
+  clockTimer: null,
+  target: 0,          // 0 = no limit; otherwise ms the child is asked to read
+  targetDone: false   // the limit was reached — the next start begins a new stretch
 };
 
 /* ================= audio ================= */
@@ -1029,6 +1067,105 @@ function updateReadouts(){
   }
 }
 
+/* ================= reading clock ================= */
+/* Counts time spent actually reading, not wall-clock since the page opened:
+   the pause between two stretches is not reading. An optional target ends the
+   stretch by itself, so a short session can be agreed on beforehand instead of
+   negotiated when the child wants to stop. */
+/* The 10 s and 30 s lengths are there to make the whole flow easy to try out
+   without sitting through a real stretch. */
+const TARGETS = [
+  ['Ingen gräns', 0], ['10 sek', 10000], ['30 sek', 30000],
+  ['3 min', 180000], ['5 min', 300000], ['10 min', 600000],
+  ['15 min', 900000], ['20 min', 1200000]
+];
+
+function elapsedMs(){
+  return S.timeMs + (S.runSince === null ? 0 : Date.now() - S.runSince);
+}
+
+function fmtClock(ms){
+  const t = Math.max(0, Math.round(ms/1000));
+  return Math.floor(t/60) + ':' + String(t%60).padStart(2,'0');
+}
+
+function renderClock(){
+  const el = $('clockBox');
+  $('clockNow').textContent = fmtClock(elapsedMs());
+  $('clockGoal').textContent = S.target ? '/ ' + fmtClock(S.target) : '';
+  el.classList.toggle('live', S.running);
+  el.classList.toggle('done', S.targetDone);
+}
+
+/* Banks the running stretch into timeMs and onto the profile's lifetime total.
+   Called before anything that reads or resets the clock, so the two never
+   double-count the same seconds. */
+function bankTime(){
+  if(S.runSince === null) return;
+  const run = Date.now() - S.runSince;
+  S.timeMs += run;
+  S.runSince = null;
+  const p = profile();
+  if(p && run > 0){ p.time = (p.time||0) + run; saveSoon(); }
+}
+
+function startClock(){
+  clearInterval(S.clockTimer);
+  S.clockTimer = setInterval(()=>{
+    renderClock();
+    if(!S.running || !S.target) return;
+    if(elapsedMs() >= S.target) finishStretch();
+  }, 500);
+  renderClock();
+}
+
+function stopClock(){
+  clearInterval(S.clockTimer);
+  S.clockTimer = null;
+  renderClock();
+}
+
+/* The target ran out: pause and say so. Position, score and text are kept, so
+   pressing play again simply starts the next stretch. */
+function finishStretch(){
+  S.targetDone = true;
+  stop();
+  // the clock right above already shows the time, so don't repeat it here
+  setHint('Tiden är slut! Dags för paus.', true);
+  speak('Tiden är slut. Dags för paus.', 'phrase');
+}
+
+function resetClock(){
+  bankTime();
+  S.timeMs = 0;
+  S.targetDone = false;
+  if(S.running) S.runSince = Date.now();
+  renderClock();
+}
+
+function setTarget(v){
+  S.target = v;
+  S.targetDone = false;
+  document.querySelectorAll('#targets .chip').forEach(b=>{
+    b.classList.toggle('on', +b.dataset.ms === v);
+  });
+  renderClock();
+}
+
+function buildTargets(){
+  const box = $('targets');
+  box.innerHTML = '';
+  TARGETS.forEach(([label, ms])=>{
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'chip' + (ms === S.target ? ' on' : '');
+    b.dataset.ms = ms;
+    b.textContent = label;
+    b.onclick = ()=>{ setTarget(ms); remember(); };
+    box.appendChild(b);
+  });
+}
+
 function setHint(txt, warm){
   const h=$('hint');
   h.textContent = txt;
@@ -1195,13 +1332,16 @@ function finishLine(){
     S.finishTimer = null;
     // anything that changed the text or the position wins over this callback
     if(!S.running || S.lines !== ofLines || S.line !== atLine) return;
-    if(S.line < S.lines.length-1){ S.line++; loadLine(); setHint('Fortsätt när du vill.'); }
+    if(S.line < S.lines.length-1){
+      S.line++; loadLine(); armHoldoff();
+      setHint('Fortsätt när du vill.');
+    }
     else if(S.hard.size && !S.reviewing){
       // repeat the words that were hard, one at a time
       S.reviewing = true;
       S.source = S.lines;          // remember the text so it can be restored afterwards
       S.lines = hardList(6);
-      S.line = 0; loadLine();
+      S.line = 0; loadLine(); armHoldoff();
       setHint('Nu tar vi de svåraste orden en gång till.');
       speak('Nu tar vi de svåra orden en gång till.', 'phrase');
     }
@@ -1213,16 +1353,38 @@ function finishLine(){
         if(S.source) S.lines = S.source;
         S.hard.clear();
         $('roHard').textContent = 0;
-        S.line = 0;
-        loadLine();
-        markActivePreset();
       }
-      stop();
-      playDone();
-      setHint('Klart! Alla meningar är lästa.', true);
-      speak('Nu är alla meningar lästa. Nu är vi klara. Vad duktig du är!', 'phrase');
+      nextSection();
     }
   }, 1600);
+}
+
+/* Running out of text no longer ends the session — the clock does that, or the
+   adult. Finishing a text rolls straight into the next one so the child can
+   keep reading without anyone stopping to pick something new. */
+function nextSection(){
+  const names = Object.keys(PRESETS);
+  const cur = S.lines.join('\n');
+  const at = names.findIndex(n => PRESETS[n].join('\n') === cur);
+  playDone();
+
+  if(at === -1){
+    // pasted homework has no next text — read it again from the top
+    S.line = 0;
+    loadLine(); armHoldoff();
+    setHint('Texten är klar! Vi tar den en gång till.', true);
+    speak('Bra jobbat! Texten är klar. Nu tar vi den en gång till.', 'phrase');
+    return;
+  }
+
+  const next = names[(at + 1) % names.length];
+  S.lines = PRESETS[next].slice();
+  S.line = 0;
+  $('txt').value = S.lines.join('\n');
+  loadLine(); armHoldoff();
+  markActivePreset();
+  setHint('Den delen är klar! Nu kommer ' + next + '.', true);
+  speak('Bra jobbat! Den delen är klar. Nu kommer ' + next + '.', 'phrase');
 }
 
 /* ================= help timer ================= */
@@ -1474,6 +1636,10 @@ async function start(){
     S.lats=[];
     const p = profile();
     if(p){ p.sessions = (p.sessions||0) + 1; saveSoon(); }
+    // a finished stretch is over: this press starts the next one from zero
+    if(S.targetDone){ S.timeMs = 0; S.targetDone = false; }
+    S.runSince = Date.now();
+    startClock();
     try{ rec.start(); }catch(e){}
     $('startBtn').classList.remove('primary');
     $('startBtn').classList.add('live');
@@ -1487,6 +1653,8 @@ async function start(){
 
 function stop(){
   S.running=false;
+  bankTime();      // before remember(), so the profile total includes this stretch
+  stopClock();
   remember();
   clearTimeout(S.holdTimer);
   clearTimeout(S.finishTimer);
@@ -1761,10 +1929,10 @@ function newProfile(name, avatar){
     name: (name || 'Barn').slice(0,16),
     avatar: AVATARS.includes(avatar) ? avatar : AVATARS[0],
     text: PRESETS['Meningar'].join('\n'),
-    line: 0, score: 0, read: 0, sessions: 0,
+    line: 0, score: 0, read: 0, sessions: 0, time: 0,
     hard: {},
     settings: {
-      size:52, holdoff:8000, strict:'normal',
+      size:52, holdoff:8000, strict:'normal', target:0,
       rate:0.9, voice:null, sndOk:false, sndFail:false, vol:0.85
     }
   };
@@ -1784,6 +1952,7 @@ function sanitize(raw){
     o.score    = clampNum(p.score, 0, 1e9, 0);
     o.read     = clampNum(p.read, 0, 1e9, 0);
     o.sessions = clampNum(p.sessions, 0, 1e9, 0);
+    o.time     = clampNum(p.time, 0, 1e11, 0);   // lifetime reading time, ms
     if(p.hard && typeof p.hard === 'object' && !Array.isArray(p.hard)){
       // keep the most frequent words, the same way noteHard trims the bank —
       // taking whichever keys happened to come first would drop the words that
@@ -1799,6 +1968,8 @@ function sanitize(raw){
       size:    clampNum(st.size, 28, 86, 52),
       holdoff: clampNum(st.holdoff, 1000, 20000, 8000),
       strict:  STRICTNESS[st.strict] ? st.strict : 'normal',
+      // only an offered length, so a hand-edited value can't set an odd goal
+      target:  TARGETS.some(t=>t[1]===st.target) ? st.target : 0,
       rate:    clampNum(st.rate, 0.6, 1.6, 0.9),
       voice:   typeof st.voice === 'string' ? st.voice.slice(0,90) : null,
       sndOk:   !!st.sndOk,
@@ -1844,7 +2015,7 @@ function profile(){
 function remember(){
   const p = profile(); if(!p) return;
   p.settings = {
-    size:S.size, holdoff:S.holdoff, strict:S.strict, rate:S.rate,
+    size:S.size, holdoff:S.holdoff, strict:S.strict, target:S.target, rate:S.rate,
     voice:S.voiceName, sndOk:S.sndOk, sndFail:S.sndFail, vol:S.vol
   };
   /* During the hard-word review S.lines holds the review words, not the text —
@@ -1858,6 +2029,11 @@ function applyProfile(p){
   const st = p.settings;
   setSize(st.size); setHold(st.holdoff); setRate(st.rate); setVol(st.vol);
   setStrict(st.strict); setSndOk(st.sndOk); setSndFail(st.sndFail);
+  setTarget(st.target || 0);
+  /* The clock measures one child's stretch, so it starts over on a swap —
+     the lifetime total lives on the profile and is shown in the Barn tab. */
+  S.timeMs = 0; S.runSince = null; S.targetDone = false;
+  stopClock();
   S.voiceName = st.voice;
   S.voice = null;
   if(window.speechSynthesis) loadVoices();
@@ -1922,7 +2098,10 @@ function renderKidStats(){
   const words = Object.keys(p.hard);
   const box = $('kidStats');
   box.innerHTML = '';
-  [['Poäng',p.score],['Meningar',p.read],['Lässtunder',p.sessions],['Svåra ord',words.length]]
+  const mins = Math.round((p.time||0)/60000);
+  [['Poäng',p.score],['Meningar',p.read],['Lässtunder',p.sessions],
+   ['Lästid', mins < 60 ? mins+' min' : Math.floor(mins/60)+' h '+(mins%60)+' min'],
+   ['Svåra ord',words.length]]
     .forEach(([k,v])=>{
       const d = document.createElement('div');
       d.className = 'stat';
@@ -2179,8 +2358,9 @@ $('clearWords').onclick = ()=>{
 
 $('clearScore').onclick = ()=>{
   const p = profile(); if(!p) return;
-  p.score = 0; p.read = 0; p.sessions = 0;
+  p.score = 0; p.read = 0; p.sessions = 0; p.time = 0;
   S.score = 0;
+  resetClock();
   updateReadouts(); saveNow(); renderKidStats();
   kidMsg('Poäng och statistik är nollställda.');
 };
@@ -2210,9 +2390,16 @@ $('importBtn').onclick = ()=>{
 
 /* A debounced write can still be pending when the tab goes away — on mobile
    the page is often killed outright rather than unloaded. */
-const flush = ()=>{ remember(); saveNow(); };
+/* bankTime first: a tab that is killed rather than unloaded would otherwise
+   lose the minutes of the stretch that was still running. */
+const flush = ()=>{
+  if(S.running){ bankTime(); S.runSince = Date.now(); }
+  remember(); saveNow();
+};
 window.addEventListener('pagehide', flush);
 document.addEventListener('visibilitychange', ()=>{ if(document.hidden) flush(); });
+
+$('clockBox').onclick = e=>{ dropFocus(e); resetClock(); };
 
 $('rSize').oninput = e=>{ setSize(+e.target.value); remember(); };
 $('rHold').oninput = e=>{ setHold(+e.target.value); armHoldoff(); remember(); };
@@ -2248,6 +2435,7 @@ document.addEventListener('keydown', e=>{
 buildPresets();
 buildSide();
 buildAvatars();
+buildTargets();
 setIcons();
 renderVoiceHelp();
 renderInstall();
