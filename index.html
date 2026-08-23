@@ -1785,10 +1785,14 @@ function sanitize(raw){
     o.read     = clampNum(p.read, 0, 1e9, 0);
     o.sessions = clampNum(p.sessions, 0, 1e9, 0);
     if(p.hard && typeof p.hard === 'object' && !Array.isArray(p.hard)){
-      Object.keys(p.hard).slice(0, BANK_MAX).forEach(k=>{
-        const n = clampNum(p.hard[k], 1, 1e6, 0);
-        if(n && k.length && k.length < 40) o.hard[k] = n;
-      });
+      // keep the most frequent words, the same way noteHard trims the bank —
+      // taking whichever keys happened to come first would drop the words that
+      // matter most from an oversized backup
+      Object.keys(p.hard)
+        .filter(k => k.length && k.length < 40 && clampNum(p.hard[k], 1, 1e6, 0))
+        .sort((a,b) => clampNum(p.hard[b],1,1e6,0) - clampNum(p.hard[a],1,1e6,0))
+        .slice(0, BANK_MAX)
+        .forEach(k=>{ o.hard[k] = clampNum(p.hard[k], 1, 1e6, 0); });
     }
     const st = (p.settings && typeof p.settings === 'object') ? p.settings : {};
     o.settings = {
@@ -1804,6 +1808,14 @@ function sanitize(raw){
     return o;
   }).filter(Boolean).slice(0, MAX_KIDS);
   if(!profiles.length) return null;
+  /* Ids address a profile, so duplicates would make every copy but the first
+     unreachable — switching to one would silently land on the other. A
+     hand-edited backup is the likely source, so re-id rather than drop. */
+  const seen = new Set();
+  profiles.forEach(p=>{
+    while(seen.has(p.id)) p.id = 'p' + Math.random().toString(36).slice(2,10);
+    seen.add(p.id);
+  });
   const active = profiles.some(p=>p.id===raw.active) ? raw.active : profiles[0].id;
   return { v:1, active, profiles };
 }
