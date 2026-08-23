@@ -24,7 +24,6 @@
   --panel-hi:#E9EEF2;
 
   --read-size:52px;
-  --holdoff:3000;
 }
 
 *{box-sizing:border-box;margin:0;padding:0}
@@ -591,6 +590,7 @@ const PRESETS = {
 /* ================= state ================= */
 const S = {
   lines: PRESETS['Meningar'].slice(),
+  source: null,     // the text as loaded — hard-word review replaces `lines`, this restores them
   line: 0,
   words: [],        // {raw, norm, state}
   pos: 0,
@@ -602,13 +602,13 @@ const S = {
   hard: new Map(),
   reviewing: false,
   ignoreResults: false,
+  recLive: false,
   posSince: 0,
   hypConsumed: 0,
   lastRescue: 0,
   sndOk: false,
   sndFail: false,
   vol: 0.85,
-  streak: 0,
   lastMiscueKey: '',
   lastMiscueAt: 0,
   speakTimer: null,
@@ -617,6 +617,8 @@ const S = {
   lats: [],
   onsetAt: null,    // timestamp of voice onset
   holdTimer: null,
+  finishTimer: null,
+  starting: false,
   speaking: false
 };
 
@@ -783,10 +785,13 @@ function resetTranscript(){
   wasLoud = false;
   $('roHyp').textContent = '—';
   $('roHeard').textContent = '—';
-  if(S.running && rec){
-    S.ignoreResults = true;          // drop anything arriving before the restart
-    try{ rec.stop(); }catch(e){}     // onend restarts, onstart releases the latch
-  }
+  if(!S.running || !rec) return;
+  /* Only stop() a session that is actually live: stopping an already-stopped
+     recognizer fires no onend, so nothing would restart it and the latch below
+     would never be released — leaving the app deaf while it looks live. */
+  if(!S.recLive){ resetRecognition(); return; }
+  S.ignoreResults = true;            // drop anything arriving before the restart
+  try{ rec.stop(); }catch(e){}       // onend restarts, onstart releases the latch
 }
 
 function loadLine(){
@@ -796,7 +801,6 @@ function loadLine(){
   }));
   S.pos = 0;
   S.posSince = performance.now();
-  S.streak = 0;
   S.lastMiscueKey = '';
   resetTranscript();
   renderSentence();
@@ -904,8 +908,11 @@ function applyAlign(hypTokens, isFinal=false){
   // The recognizer can at any time deliver a shorter token list than before —
   // on session restart, or when an interim result is replaced by a shorter
   // final result. If the anchor then points past the list the cursor stalls
-  // for good, so it must be caught here.
-  if(S.hypConsumed > hypTokens.length) S.hypConsumed = 0;
+  // for good, so it must be caught here. Clamp to the list end rather than
+  // resetting to zero: from zero every already-consumed token is replayed
+  // against the words at the cursor, and a common short word like "på" then
+  // advances the cursor without anyone having said anything.
+  if(S.hypConsumed > hypTokens.length) S.hypConsumed = hypTokens.length;
   $('roTok').textContent = S.hypConsumed + '/' + hypTokens.length;
 
   const {states,pos,consumed,miscues} = align(hypTokens, S.pos, S.hypConsumed);
@@ -923,10 +930,12 @@ function applyAlign(hypTokens, isFinal=false){
       // only make a sound when the attempt is actually new
       const key = m.at + ':' + m.heard;
       const now = performance.now();
-      if(key !== S.lastMiscueKey && now - S.lastMiscueAt > 600){
+      // the same key must be allowed again after a while, or a genuine second
+      // attempt at the same word passes unremarked
+      const fresh = key !== S.lastMiscueKey || now - S.lastMiscueAt > 2500;
+      if(fresh && now - S.lastMiscueAt > 600){
         S.lastMiscueKey = key;
         S.lastMiscueAt = now;
-        S.streak = 0;
         playFail();
       }
     }
@@ -951,8 +960,7 @@ function applyAlign(hypTokens, isFinal=false){
     if(S.words[k].state==='done'){ S.score++; anyDone=true; }
     if(S.words[k].state==='skipped'){ S.misses++; anySkipped=true; }
   }
-  if(anySkipped) S.streak = 0;
-  if(anyDone){ S.streak++; playOk(); S.lastMiscueKey=''; }
+  if(anyDone){ playOk(); S.lastMiscueKey=''; }
   S.pos = pos;
   S.posSince = performance.now();
   S.hypConsumed = consumed;
@@ -980,21 +988,41 @@ function hardList(n){
     .map(e=>e[0]);
 }
 
+/* The delay before moving on races anything the adult does in the meantime —
+   next sentence, a new text, pause. The handle lets those cancel it, so the
+   session can't advance twice or mutate a stopped session. */
 function finishLine(){
   clearTimeout(S.holdTimer);
+  clearTimeout(S.finishTimer);
   setHint('Bra läst!', true);
   speak('Bra läst!', 'phrase');
-  setTimeout(()=>{
+  const atLine = S.line, ofLines = S.lines;
+  S.finishTimer = setTimeout(()=>{
+    S.finishTimer = null;
+    // anything that changed the text or the position wins over this callback
+    if(!S.running || S.lines !== ofLines || S.line !== atLine) return;
     if(S.line < S.lines.length-1){ S.line++; loadLine(); setHint('Fortsätt när du vill.'); }
     else if(S.hard.size && !S.reviewing){
       // repeat the words that were hard, one at a time
       S.reviewing = true;
+      S.source = S.lines;          // remember the text so it can be restored afterwards
       S.lines = hardList(6);
       S.line = 0; loadLine();
       setHint('Nu tar vi de svåraste orden en gång till.');
       speak('Nu tar vi de svåra orden en gång till.', 'phrase');
     }
     else {
+      // the review is over: put the real text back and clear the tally, so a
+      // later run through the text can earn its own review
+      if(S.reviewing){
+        S.reviewing = false;
+        if(S.source) S.lines = S.source;
+        S.hard.clear();
+        $('roHard').textContent = 0;
+        S.line = 0;
+        loadLine();
+        markActivePreset();
+      }
       stop();
       playDone();
       setHint('Klart! Alla meningar är lästa.', true);
@@ -1008,13 +1036,15 @@ function armHoldoff(){
   clearTimeout(S.holdTimer);
   if(!S.running || S.pos>=S.words.length) return;
   S.holdTimer = setTimeout(()=>{
-    if(!S.running || S.speaking) return;
+    if(!S.running) return;
+    // Expiring mid-utterance must not drop the chain: the child hasn't had a
+    // fair silence to read in yet, so wait out the speech and try again.
+    if(S.speaking){ armHoldoff(); return; }
     const el = document.querySelector(`.w[data-i="${S.pos}"]`);
     if(el){ el.classList.remove('current'); el.classList.add('helping'); }
     const w = S.words[S.pos];
     setHint('Det här ordet är ' + w.raw);
     noteHard(w.raw);
-    S.streak = 0;
     speak(w.raw, 'word');
     armHoldoff();
   }, S.holdoff);
@@ -1036,9 +1066,17 @@ function speak(text, kind='word'){
   if(S.voice) u.voice=S.voice;
   S.speaking=true;
   micGate(true);
+  /* Dropping onresult events while speaking is not enough: the recognizer keeps
+     transcribing our own TTS into its cumulative result list, and those tokens
+     would be aligned the moment the gate lifts — letting the help feature score
+     the word by saying it itself. Throwing the transcript away afterwards is the
+     only reliable way to discard what the app said. */
   const release = ()=>{
     clearTimeout(S.speakTimer);
+    if(!S.speaking) return;
     S.speaking=false; micGate(false);
+    resetTranscript();
+    armHoldoff();
   };
   u.onend = release;
   u.onerror = release;
@@ -1139,6 +1177,7 @@ function buildRecognizer(){
   r.onstart = ()=>{
     S.ignoreResults = false;
     S.hypConsumed = 0;
+    S.recLive = true;
   };
 
   r.onresult = ev=>{
@@ -1146,7 +1185,15 @@ function buildRecognizer(){
     let full='';
     for(let i=0;i<ev.results.length;i++) full += ev.results[i][0].transcript+' ';
     $('roHyp').textContent = full.trim().slice(-70) || '—';
-    applyAlign(tokens(full), ev.results[ev.results.length-1].isFinal);
+    /* A single event can carry a finalized result followed by a fresh interim
+       one. Looking only at the last result would classify the whole event as
+       interim and the finalized misreading would never be judged, so scan
+       everything that changed in this event for a final result. */
+    let anyFinal = false;
+    for(let i=ev.resultIndex; i<ev.results.length; i++){
+      if(ev.results[i].isFinal){ anyFinal = true; break; }
+    }
+    applyAlign(tokens(full), anyFinal);
   };
   r.onerror = ev=>{
     if(ev.error==='not-allowed') showErr('Mikrofonen blockerades. Tillåt åtkomst och försök igen.');
@@ -1156,11 +1203,18 @@ function buildRecognizer(){
      called too soon after onend, and a swallowed exception there kills
      recognition permanently — hence a few retries. */
   r.onend = ()=>{
+    S.recLive = false;
     if(!S.running) return;
     const retry = n=>{
-      if(!S.running) return;
+      if(!S.running || rec !== r) return;
       try{ r.start(); }
-      catch(e){ if(n>0) setTimeout(()=>retry(n-1), 160); }
+      catch(e){
+        if(n>0){ setTimeout(()=>retry(n-1), 160); return; }
+        /* Out of retries this instance is dead for good, and S.running stays
+           true — the app would look live while being deaf. Rebuild from
+           scratch instead of giving up silently. */
+        resetRecognition();
+      }
     };
     retry(6);
   };
@@ -1173,6 +1227,7 @@ function buildRecognizer(){
    instance away and build a fresh one. Reading position and score are kept. */
 function resetRecognition(){
   S.ignoreResults = true;
+  S.recLive = false;
   if(rec){
     try{ rec.onend = null; rec.stop(); }catch(e){}  // detach onend so the old instance can't restart itself
     rec = null;
@@ -1191,34 +1246,44 @@ function resetRecognition(){
     try{ rec.start(); }catch(e){ if(n>0) setTimeout(()=>tryStart(n-1), 200); }
   };
   tryStart(10);
-  setHint('Nu lyssnar jag igen.');
   armHoldoff();
 }
 
 /* ================= start / stop ================= */
 async function start(){
-  /* Speak BEFORE any await: iOS home-screen web apps (standalone mode) only
-     allow the first speechSynthesis.speak() synchronously inside the user
-     gesture — after awaiting the microphone it is silently blocked. */
-  setHint('Läs högt, jag lyssnar.');
-  speak('Läs högt, jag lyssnar.', 'phrase');
-  const ok = await ensureAudio();
-  if(!ok) return;
-  if(!rec) rec = buildRecognizer();
-  if(!rec) return;
-  S.running=true;
-  S.lats=[];
-  try{ rec.start(); }catch(e){}
-  $('startBtn').classList.remove('primary');
-  $('startBtn').classList.add('live');
-  setIcons();
-  renderSentence(); renderTrack();
-  armHoldoff();
+  /* S.running is only set once the microphone is granted, so without this
+     guard a second press during the permission prompt re-enters start()
+     instead of toggling: the microphone gets requested twice (leaking the
+     losing stream) and the intro is spoken twice. */
+  if(S.starting) return;
+  S.starting = true;
+  try{
+    /* Speak BEFORE any await: iOS home-screen web apps (standalone mode) only
+       allow the first speechSynthesis.speak() synchronously inside the user
+       gesture — after awaiting the microphone it is silently blocked. */
+    setHint('Läs högt, jag lyssnar.');
+    speak('Läs högt, jag lyssnar.', 'phrase');
+    const ok = await ensureAudio();
+    if(!ok) return;
+    if(!rec) rec = buildRecognizer();
+    if(!rec) return;
+    S.running=true;
+    S.lats=[];
+    try{ rec.start(); }catch(e){}
+    $('startBtn').classList.remove('primary');
+    $('startBtn').classList.add('live');
+    setIcons();
+    renderSentence(); renderTrack();
+    armHoldoff();
+  } finally {
+    S.starting = false;
+  }
 }
 
 function stop(){
   S.running=false;
   clearTimeout(S.holdTimer);
+  clearTimeout(S.finishTimer);
   if(rec){ try{ rec.stop(); }catch(e){} }
   if(rafId){ cancelAnimationFrame(rafId); rafId=null; }
   if(audioCtx && audioCtx.state === 'running') audioCtx.suspend().catch(()=>{});
@@ -1278,10 +1343,22 @@ function markActivePreset(){
   });
 }
 
+/* Called on every way of closing the settings sheet, so it must be a no-op
+   when the text is untouched: otherwise adjusting the volume — or dismissing
+   an error — would throw the reading position back to the first sentence and
+   silently abort a hard-word review. */
 function applyText(){
   const lines = $('txt').value.split('\n').map(s=>s.trim()).filter(Boolean);
   if(!lines.length) return;
-  S.lines=lines; S.line=0; loadLine();
+  const same = S.reviewing
+    ? (S.source && lines.join('\n') === S.source.join('\n'))
+    : lines.join('\n') === S.lines.join('\n');
+  if(same) return;
+  S.lines=lines; S.line=0;
+  S.source=null; S.reviewing=false;   // a new text earns a fresh review
+  S.hard.clear();
+  $('roHard').textContent = 0;
+  loadLine();
   markActivePreset();
 }
 
@@ -1339,12 +1416,20 @@ function testVoice(){
 }
 
 /* ================= wiring ================= */
-$('startBtn').onclick = ()=>{ S.running ? stop() : start(); };
-$('nextBtn').onclick  = ()=>{
+/* A pointer click leaves focus on the button in some browsers, which would
+   then swallow the Space shortcut. Keyboard-triggered clicks report detail 0
+   and keep their focus, so Tab navigation is unaffected. */
+const dropFocus = e => { if(e && e.detail > 0 && e.currentTarget) e.currentTarget.blur(); };
+
+$('startBtn').onclick = e=>{ dropFocus(e); S.running ? stop() : start(); };
+$('nextBtn').onclick  = e=>{
+  dropFocus(e);
+  clearTimeout(S.finishTimer);
   if(S.line < S.lines.length-1){ S.line++; } else { S.line=0; }
   loadLine(); armHoldoff(); setHint('Ny mening. Läs när du vill.');
 };
-$('sayBtn').onclick = ()=>{
+$('sayBtn').onclick = e=>{
+  dropFocus(e);
   const w=S.words[S.pos]; if(w) speak(w.raw);
 };
 const TAB_SUB = {
@@ -1367,15 +1452,23 @@ document.querySelectorAll('.tab').forEach(t=>{
   t.onclick = ()=> showTab(t.dataset.tab);
 });
 
-$('cbOk').onchange   = e=>{ S.sndOk = e.target.checked; if(S.sndOk){ S.streak=0; playOk(); } };
+$('cbOk').onchange   = e=>{ S.sndOk = e.target.checked; if(S.sndOk) playOk(); };
 $('cbFail').onchange = e=>{ S.sndFail = e.target.checked; if(S.sndFail) playFail(); };
 $('rVol').oninput = e=>{
   S.vol = +e.target.value/100;
   $('vVol').textContent = e.target.value+' %';
 };
-$('rVol').onchange = ()=>{ S.streak=0; playOk(); };
+/* Sound the new level directly rather than through playOk(), which is silent
+   while the chime is switched off — the slider must always be audible. */
+$('rVol').onchange = ()=>{ tone(1046.5, 0, 0.20, 0.5); };
 
-$('resetBtn').onclick = resetRecognition;
+/* The hint belongs to the manual press only — resetRecognition also runs by
+   itself as a recovery path, and announcing that every time would confuse. */
+$('resetBtn').onclick = e=>{
+  dropFocus(e);
+  resetRecognition();
+  if(S.running) setHint('Nu lyssnar jag igen.');
+};
 $('testVoiceBtn').onclick = testVoice;
 $('setupBtn').onclick = ()=>{ loadVoices(); $('sheet').classList.add('open'); };
 $('closeBtn').onclick = ()=>{ applyText(); $('sheet').classList.remove('open'); };
@@ -1396,15 +1489,29 @@ $('rRate').oninput = e=>{
 };
 $('strict').onchange = e=>{ S.strict = e.target.value; };
 
+/* Only form controls may swallow the shortcuts. Requiring document.body as the
+   target instead would kill them for good once any button had been clicked,
+   since focus stays on that button — and Space would re-activate it rather
+   than toggling start/pause the way the on-screen hint promises. */
+const isTyping = el =>
+  !!el && (el.isContentEditable ||
+           ['TEXTAREA','INPUT','SELECT','OPTION'].includes(el.tagName));
+
 document.addEventListener('keydown', e=>{
   if(e.key==='Escape' && $('sheet').classList.contains('open')){
     applyText(); $('sheet').classList.remove('open'); return;
   }
   if($('sheet').classList.contains('open')) return;
-  if(e.target!==document.body) return;
-  if(e.code==='Space'){ e.preventDefault(); $('startBtn').click(); }
-  else if(e.key==='l' || e.key==='L'){ $('sayBtn').click(); }
-  else if(e.key==='ArrowRight'){ $('nextBtn').click(); }
+  if(isTyping(e.target)) return;
+  if(e.metaKey || e.ctrlKey || e.altKey) return;
+  if(e.code==='Space'){
+    // a button reached by Tab keeps its own Space activation — don't hijack it
+    if(document.activeElement && document.activeElement.tagName==='BUTTON') return;
+    e.preventDefault();          // stops the page from scrolling
+    $('startBtn').click();
+  }
+  else if(e.key==='l' || e.key==='L'){ e.preventDefault(); $('sayBtn').click(); }
+  else if(e.key==='ArrowRight'){ e.preventDefault(); $('nextBtn').click(); }
 });
 
 /* ================= init ================= */
