@@ -612,6 +612,7 @@ const S = {
   lastMiscueKey: '',
   lastMiscueAt: 0,
   speakTimer: null,
+  speakSeq: 0,
   rate: 0.9,
   voice: null,
   lats: [],
@@ -1071,9 +1072,14 @@ function speak(text, kind='word'){
      would be aligned the moment the gate lifts — letting the help feature score
      the word by saying it itself. Throwing the transcript away afterwards is the
      only reliable way to discard what the app said. */
+  /* Each utterance owns the shared speaking state only for its own turn.
+     A cancelled utterance's onend arrives after the next one has already
+     started, and without this check it would clear that one's watchdog and
+     un-gate the microphone mid-speech. */
+  const myTurn = ++S.speakSeq;
   const release = ()=>{
+    if(S.speakSeq !== myTurn) return;
     clearTimeout(S.speakTimer);
-    if(!S.speaking) return;
     S.speaking=false; micGate(false);
     resetTranscript();
     armHoldoff();
