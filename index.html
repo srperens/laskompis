@@ -2,11 +2,16 @@
 <html lang="sv">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Läskompis">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="theme-color" content="#E9EEF2">
 <title>Läskompis</title>
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="icon" href="./icon-192.png" sizes="192x192" type="image/png">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -41,7 +46,8 @@ body{
 /* ---------- top bar ---------- */
 .top{
   display:flex;align-items:center;gap:20px;
-  padding:14px 24px;
+  /* standalone on iOS puts the page under the status bar; env() is 0 elsewhere */
+  padding:calc(14px + env(safe-area-inset-top)) 24px 14px;
   border-bottom:1px solid var(--rule);
   flex:0 0 auto;
 }
@@ -124,8 +130,10 @@ body{
   .icon svg{width:27px;height:27px}
   .controls{gap:10px;padding:0 12px 12px}
   .key{display:none}          /* keyboard hints are meaningless on touch */
-  .readouts{display:none}     /* diagnostics hidden — progress track stays */
-  .panel{padding:8px 12px 10px}
+  .panel .readouts{display:none}  /* diagnostics hidden — progress track stays.
+       Needs the extra specificity: the .readouts display:flex rule further
+       down the file would otherwise win on source order. */
+  .panel{padding:8px 12px calc(10px + env(safe-area-inset-bottom))}
   .track{height:14px}
   .seg.current{height:14px}
 }
@@ -221,7 +229,8 @@ body{
   color:var(--panel-ink);
   font-family:'JetBrains Mono',monospace;
   font-size:11px;
-  padding:12px 24px 14px;
+  /* keeps the progress track clear of the iPhone home indicator in standalone */
+  padding:12px 24px calc(14px + env(safe-area-inset-bottom));
   display:flex;flex-direction:column;gap:10px;
 }
 .track{
@@ -299,7 +308,9 @@ select{font-size:15px;padding:9px;border:1px solid var(--rule);border-radius:4px
 .voicerow select{flex:1;min-width:0}
 .voicerow .tbtn{flex:0 0 auto;white-space:nowrap}
 .vinfo{font-size:12.5px;color:var(--faded);line-height:1.45;margin-top:7px}
-.check{
+/* .field label sets uppercase mono for the section headings; this rule has to
+   out-specify it or the checkbox text inherits the heading styling. */
+.field label.check{
   display:flex;gap:10px;align-items:flex-start;
   font-family:'Atkinson Hyperlegible',sans-serif;font-size:15px;
   text-transform:none;letter-spacing:0;color:var(--ink);
@@ -331,6 +342,107 @@ select{font-size:15px;padding:9px;border:1px solid var(--rule);border-radius:4px
   font-size:15px;line-height:1.5;margin-bottom:18px;display:none;
 }
 .err.show{display:block}
+/* ---------- profiles ---------- */
+/* The switcher lives in the top bar so the adult can see at a glance whose
+   settings and progress are loaded. On touch only the avatar survives — the
+   bar is already tight there. */
+.pbtn{
+  display:flex;align-items:center;gap:7px;
+  font-family:'Atkinson Hyperlegible',sans-serif;font-size:14px;
+  background:none;border:1px solid var(--rule);border-radius:20px;
+  color:var(--ink);padding:5px 12px 5px 9px;cursor:pointer;
+}
+.pbtn .av{font-size:18px;line-height:1}
+.pbtn:hover{border-color:var(--ink)}
+.pbtn:focus-visible{outline:2px solid var(--good);outline-offset:2px}
+
+.kids{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.kid{
+  display:flex;align-items:center;gap:9px;
+  font-family:'Atkinson Hyperlegible',sans-serif;font-size:15px;
+  padding:8px 15px 8px 11px;
+  border:1px solid var(--rule);border-radius:22px;background:#fff;
+  color:var(--ink);cursor:pointer;
+}
+.kid .av{font-size:20px;line-height:1}
+.kid.active{background:var(--mark);border-color:var(--mark);font-weight:700}
+.kid:hover{border-color:var(--ink)}
+.kid:focus-visible{outline:2px solid var(--good);outline-offset:2px}
+
+.avpick{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:11px}
+.avpick button{
+  font-size:19px;line-height:1;padding:5px 7px;background:#fff;cursor:pointer;
+  border:1px solid var(--rule);border-radius:6px;
+}
+.avpick button[aria-pressed="true"]{border-color:var(--ink);background:var(--mark)}
+.newkid{display:flex;gap:8px;align-items:stretch}
+.newkid input[type=text]{
+  flex:1;min-width:0;font-family:inherit;font-size:15px;padding:9px;
+  border:1px solid var(--rule);border-radius:4px;background:#fff;color:var(--ink);
+}
+.newkid .tbtn{flex:0 0 auto;white-space:nowrap}
+.btnrow{display:flex;gap:8px;flex-wrap:wrap}
+
+.stats{display:flex;gap:22px;flex-wrap:wrap;margin-bottom:14px}
+.stat{
+  font-family:'JetBrains Mono',monospace;font-size:10px;
+  letter-spacing:.12em;text-transform:uppercase;color:var(--faded);
+}
+.stat b{
+  display:block;font-size:21px;letter-spacing:0;color:var(--ink);
+  font-weight:500;font-variant-numeric:tabular-nums;margin-top:3px;
+}
+.wordbank{display:flex;gap:6px;flex-wrap:wrap}
+.wordbank span{
+  font-size:14px;padding:4px 11px;border-radius:14px;
+  background:#fff;border:1px solid var(--rule);
+}
+.wordbank b{
+  font-family:'JetBrains Mono',monospace;font-weight:500;
+  font-size:11px;color:var(--faded);margin-left:6px;
+}
+.msg{font-size:13.5px;color:var(--good);line-height:1.45;margin-top:8px;min-height:19px}
+.msg.bad{color:var(--soft)}
+
+/* ---------- voice help ---------- */
+.note h4{
+  font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:500;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--ink);margin-bottom:5px;
+}
+.note + .note{margin-top:14px}
+.note .path{
+  font-family:'JetBrains Mono',monospace;font-size:12.5px;
+  color:var(--ink);line-height:1.6;margin-bottom:7px;
+}
+.note p + p{margin-top:8px}
+.note .openrow{display:flex;gap:11px;align-items:center;flex-wrap:wrap;margin-top:11px}
+.note .openrow .tbtn{
+  flex:0 0 auto;display:inline-block;text-decoration:none;
+  font-family:'JetBrains Mono',monospace;font-size:12px;letter-spacing:.06em;
+  background:#fff;border:1px solid var(--rule);border-radius:2px;
+  color:var(--ink);padding:7px 12px;cursor:pointer;
+}
+.note .openrow .tbtn:hover{border-color:var(--ink)}
+.note .openrow span{font-size:12.5px;color:var(--faded);line-height:1.45}
+.note .manual{font-size:12.5px;color:var(--faded)}
+
+details.osnote{margin-top:14px}
+details.osnote > summary{
+  font-family:'JetBrains Mono',monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;
+  color:var(--faded);cursor:pointer;list-style:none;
+}
+details.osnote > summary::-webkit-details-marker{display:none}
+details.osnote > summary:before{content:'+\00a0';}
+details.osnote[open] > summary:before{content:'\2212\00a0';}
+details.osnote > summary:hover{color:var(--ink)}
+details.osnote > div{margin-top:14px}
+
+@media (max-width:760px){
+  .pbtn .nm{display:none}
+  .pbtn{padding:5px 9px;gap:0}
+  .stats{gap:16px}
+}
 </style>
 </head>
 <body>
@@ -338,6 +450,10 @@ select{font-size:15px;padding:9px;border:1px solid var(--rule);border-radius:4px
 <div class="top">
   <div class="wordmark">läskompis</div>
   <div class="top-spacer"></div>
+  <button class="pbtn" id="profBtn" aria-label="Byt barn"
+          title="Byt barn — varje barn har egna inställningar, egen text och egen progress">
+    <span class="av" id="profAv">🦊</span><span class="nm" id="profNm">Barn</span>
+  </button>
   <div class="score" id="scoreBox"><b id="score">0</b></div>
   <button class="tbtn" id="resetBtn" aria-label="Starta om lyssningen" title="Om markören har fastnat: starta om taligenkänningen. Position och poäng behålls.">Starta om lyssningen</button>
   <button class="tbtn" id="setupBtn" aria-label="Text och inställningar" title="Text och inställningar">Text &amp; inställningar</button>
@@ -392,6 +508,7 @@ select{font-size:15px;padding:9px;border:1px solid var(--rule);border-radius:4px
       <button class="tab" role="tab" data-tab="text"     aria-selected="true">Text</button>
       <button class="tab" role="tab" data-tab="reading"  aria-selected="false">Läsning</button>
       <button class="tab" role="tab" data-tab="voice"    aria-selected="false">Röst</button>
+      <button class="tab" role="tab" data-tab="kids"     aria-selected="false">Barn</button>
     </div>
 
     <div class="cardbody">
@@ -439,6 +556,12 @@ select{font-size:15px;padding:9px;border:1px solid var(--rule);border-radius:4px
             <button class="tbtn" id="testVoiceBtn" title="Hör hur rösten låter">Prova</button>
           </div>
           <p class="vinfo" id="voiceInfo"></p>
+          <div class="note" id="voiceBrowser"></div>
+          <div class="note" id="voiceHelp"></div>
+          <details class="osnote">
+            <summary>Andra operativsystem</summary>
+            <div id="voiceAll"></div>
+          </details>
         </div>
         <div class="field">
           <label>Ljud</label>
@@ -454,6 +577,58 @@ select{font-size:15px;padding:9px;border:1px solid var(--rule);border-radius:4px
         <div class="field">
           <label>Ljudvolym <span class="val" id="vVol">85 %</span></label>
           <input type="range" id="rVol" min="0" max="100" step="5" value="85">
+        </div>
+      </section>
+
+      <section class="tabpage" data-page="kids">
+        <div class="field">
+          <label>Vem läser?</label>
+          <div class="kids" id="kids"></div>
+          <p class="vinfo">Varje barn har egna inställningar, egen text, egen läsposition,
+          egna poäng och en egen lista över svåra ord. Allt sparas bara i den här
+          webbläsaren — appen har ingen server och skickar ingenting vidare.</p>
+        </div>
+
+        <div class="field">
+          <label>Lägg till barn</label>
+          <div class="avpick" id="avpick"></div>
+          <div class="newkid">
+            <input type="text" id="newName" maxlength="16" placeholder="Namn" autocomplete="off">
+            <button class="tbtn" id="addKid">Lägg till</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Så här har det gått <span class="val" id="kidName"></span></label>
+          <div class="stats" id="kidStats"></div>
+          <div class="wordbank" id="kidWords"></div>
+        </div>
+
+        <div class="field">
+          <label>Hantera</label>
+          <div class="btnrow">
+            <button class="tbtn" id="renameKid">Byt namn</button>
+            <button class="tbtn" id="clearWords">Nollställ svåra ord</button>
+            <button class="tbtn" id="clearScore">Nollställ poäng</button>
+            <button class="tbtn" id="delKid">Ta bort barnet</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Spara appen på enheten</label>
+          <div class="note" id="installNote"></div>
+        </div>
+
+        <div class="field">
+          <label>Säkerhetskopia</label>
+          <textarea id="backup" placeholder="Tryck på Visa kopia för att få ut all sparad data som text. Klistra in en tidigare kopia här och tryck Läs in kopia för att återställa." spellcheck="false"></textarea>
+          <div class="btnrow">
+            <button class="tbtn" id="exportBtn">Visa kopia</button>
+            <button class="tbtn" id="importBtn">Läs in kopia</button>
+          </div>
+          <p class="msg" id="kidMsg"></p>
+          <p class="vinfo">En kopia i text är enda sättet att flytta progressen till en
+          annan enhet — och det som gäller om den sparade datan ändå försvinner.</p>
         </div>
       </section>
 
@@ -613,8 +788,11 @@ const S = {
   lastMiscueAt: 0,
   speakTimer: null,
   speakSeq: 0,
+  size: 52,
   rate: 0.9,
   voice: null,
+  voiceName: null,  // the voice the adult picked, by name — the object itself
+                    // may be missing on another device, the preference isn't
   lats: [],
   onsetAt: null,    // timestamp of voice onset
   holdTimer: null,
@@ -807,6 +985,7 @@ function loadLine(){
   renderSentence();
   renderTrack();
   updateReadouts();
+  remember();
 }
 
 function renderSentence(){
@@ -980,6 +1159,18 @@ function noteHard(word){
   const k = word.toLowerCase();
   S.hard.set(k, (S.hard.get(k)||0) + 1);
   $('roHard').textContent = S.hard.size;
+
+  /* S.hard is cleared after every review; the profile's bank is not, so the
+     adult can see which words keep coming back week after week. Trimmed to
+     the most frequent ones so it can't grow without bound. */
+  const p = profile();
+  if(!p) return;
+  p.hard[k] = (p.hard[k]||0) + 1;
+  const keys = Object.keys(p.hard);
+  if(keys.length > BANK_MAX){
+    keys.sort((a,b)=>p.hard[b]-p.hard[a]).slice(BANK_MAX).forEach(x=>{ delete p.hard[x]; });
+  }
+  saveSoon();
 }
 
 function hardList(n){
@@ -995,6 +1186,8 @@ function hardList(n){
 function finishLine(){
   clearTimeout(S.holdTimer);
   clearTimeout(S.finishTimer);
+  const done = profile();
+  if(done && !S.reviewing){ done.read = (done.read||0) + 1; saveSoon(); }
   setHint('Bra läst!', true);
   speak('Bra läst!', 'phrase');
   const atLine = S.line, ofLines = S.lines;
@@ -1204,6 +1397,10 @@ function buildRecognizer(){
   r.onerror = ev=>{
     if(ev.error==='not-allowed') showErr('Mikrofonen blockerades. Tillåt åtkomst och försök igen.');
     if(ev.error==='no-speech') return;
+    /* The app starts without a network now that it can be installed, but
+       Chrome's recognizer transcribes server-side and simply fails. Say so
+       rather than letting the cursor sit still for no visible reason. */
+    if(ev.error==='network') setHint('Taligenkänningen behöver internet just nu.', true);
   };
   /* Chrome ends the session on its own during silence. start() throws if
      called too soon after onend, and a swallowed exception there kills
@@ -1275,6 +1472,8 @@ async function start(){
     if(!rec) return;
     S.running=true;
     S.lats=[];
+    const p = profile();
+    if(p){ p.sessions = (p.sessions||0) + 1; saveSoon(); }
     try{ rec.start(); }catch(e){}
     $('startBtn').classList.remove('primary');
     $('startBtn').classList.add('live');
@@ -1288,6 +1487,7 @@ async function start(){
 
 function stop(){
   S.running=false;
+  remember();
   clearTimeout(S.holdTimer);
   clearTimeout(S.finishTimer);
   if(rec){ try{ rec.stop(); }catch(e){} }
@@ -1368,21 +1568,27 @@ function applyText(){
   markActivePreset();
 }
 
-/* The browser only exposes the voices installed on the system. On macOS
-   only Alva ships by default — more can be downloaded under System Settings ›
-   Accessibility › Spoken Content › Manage Voices. */
+/* The browser only exposes the voices the system provides — plus, in Chrome
+   and Edge, the browser's own network voices. Which ones are available and
+   where they are installed differs per platform; VOICE_HELP holds the
+   per-system instructions shown next to this list. */
 let allVoices = [];
 
 function loadVoices(){
   const sel = $('voice');
   allVoices = speechSynthesis.getVoices();
-  if(!allVoices.length) return;              // Chrome fills the list asynchronously
+  if(!allVoices.length){
+    // Chrome fills the list asynchronously and calls back through
+    // onvoiceschanged — but the list can also stay empty for good
+    $('voiceInfo').textContent = 'Ingen röst hittad ännu — så här installerar du en:';
+    return;
+  }
 
   const lang = v => (v.lang||'').replace('_','-');
   const sv    = allVoices.filter(v=> lang(v).toLowerCase().startsWith('sv'));
   const other = allVoices.filter(v=> !lang(v).toLowerCase().startsWith('sv'));
 
-  const prev = S.voice && S.voice.name;
+  const want = S.voiceName || (S.voice && S.voice.name);
   sel.innerHTML = '';
 
   const addGroup = (label, list) => {
@@ -1401,24 +1607,434 @@ function loadVoices(){
   addGroup('Svenska (' + sv.length + ')', sv);
   addGroup('Övriga språk — nödlösning', other);
 
-  const pick = allVoices.find(v=>v.name===prev) || sv[0] || allVoices[0];
+  /* Fall back silently when the remembered voice isn't installed here, but
+     keep S.voiceName untouched: plugging the same profile into a device that
+     does have the voice should bring it back. */
+  const pick = allVoices.find(v=>v.name===want) || sv[0] || allVoices[0];
   S.voice = pick;
   sel.value = pick.name;
 
   $('voiceInfo').textContent = sv.length > 1
-    ? sv.length + ' svenska röster installerade'
+    ? sv.length + ' svenska röster hittade.'
     : sv.length === 1
-      ? 'Bara en svensk röst installerad. Fler finns under Systeminställningar › Hjälpmedel › Talat innehåll › Hantera röster.'
-      : 'Ingen svensk röst hittad. Installera en under Systeminställningar › Hjälpmedel › Talat innehåll.';
+      ? 'Bara en svensk röst hittad — så här får du fler:'
+      : 'Ingen svensk röst hittad — så här installerar du en:';
 
   sel.onchange = ()=>{
     S.voice = allVoices.find(v=>v.name===sel.value) || null;
+    S.voiceName = S.voice ? S.voice.name : null;
+    remember();
     testVoice();
   };
 }
 
 function testVoice(){
   speak('Hej! Katten satt på mattan och tittade ut genom fönstret.', 'phrase');
+}
+
+
+/* ================= voices: how to get better ones ================= */
+/* The browser only exposes what the system (or the browser itself) provides,
+   and every platform hides that behind a different menu. Paths checked against
+   Apple's, Microsoft's and Google's own documentation in augusti 2026. Apple
+   renamed the menu from "Talat innehåll" to "Uppläsning och tal" in macOS 26
+   and iOS 26, so both names are given. */
+const VOICE_HELP = {
+  mac: {
+    name: 'macOS',
+    path: 'Systeminställningar › Hjälpmedel › Uppläsning och tal › Systemröst › Hantera röster…',
+    body: 'Välj Svenska och ladda ner <b>Alva (Premium)</b> — den är gratis, låter klart bäst av de svenska, och är den appen ska använda. Nedladdningen är stor, så ta den över wifi. Menyn hette <b>Talat innehåll</b> före macOS 26.',
+    open: 'x-apple.systempreferences:com.apple.Accessibility-Settings.extension',
+    openLabel: 'Öppna Hjälpmedel'
+  },
+  ios: {
+    name: 'iPhone och iPad',
+    path: 'Inställningar › Hjälpmedel › Uppläsning och tal › Röster › Svenska',
+    body: 'Tryck på nedladdningsikonen vid <b>Alva</b> och välj <b>Premium</b> om den erbjuds — det är den bästa svenska rösten, och den är gratis. <b>Klara</b> är alternativet. Menyn hette <b>Talat innehåll</b> före iOS 26.',
+    manual: 'iOS låter inte en webbsida öppna Inställningar, så den biten får du gå själv.'
+  },
+  win: {
+    name: 'Windows',
+    path: 'Inställningar › Tid och språk › Tal › Hantera röster › Lägg till röster',
+    body: 'Välj Svenska och tryck Lägg till. Windows enda svenska systemröst heter <b>Microsoft Bengt</b>. Vill du ha något bättre är <b>Microsoft Edge</b> genvägen: Edge har svenska neuronröster inbyggda som dyker upp i listan ovan märkta <b>Online (Natural)</b>, helt utan installation.',
+    open: 'ms-settings:speech',
+    openLabel: 'Öppna röstinställningarna'
+  },
+  android: {
+    name: 'Android',
+    path: 'Inställningar › Tillgänglighet › Text till tal › kugghjulet vid motorn › Installera röstdata › Svenska',
+    body: 'Motorn heter <b>Taligenkänning och talsyntes från Google</b>. På vissa telefoner ligger inställningen under Inställningar › System › Språk och inmatning i stället. Starta om webbläsaren efter nedladdningen.',
+    manual: 'Android släpper inte in webbsidor i systeminställningarna, så den biten får du gå själv.'
+  },
+  cros: {
+    name: 'ChromeOS',
+    path: 'Inställningar › Tillgänglighet › Text till tal › Röstinställningar för Text till tal',
+    body: 'Välj en svensk röst och slå på <b>Använd en naturlig röst när enheten är online</b>.',
+    manual: 'Webbsidor får inte länka till chrome://-sidor, så den biten får du gå själv.'
+  },
+  other: {
+    name: 'Linux och övriga',
+    path: 'Systemets talsyntes — speech-dispatcher med espeak-ng eller mbrola',
+    body: 'De inbyggda rösterna låter ofta robotaktigt. I Chrome finns i stället Googles nätröster — <b>Google svenska</b> i listan ovan — som låter betydligt bättre och inte kräver någon installation.'
+  }
+};
+
+/* iPadOS reports itself as a Mac; the touch points are what give it away. */
+function detectOS(){
+  const ua = navigator.userAgent || '';
+  const plat = navigator.platform || '';
+  if(/iPhone|iPad|iPod/.test(ua) || (plat === 'MacIntel' && navigator.maxTouchPoints > 1)) return 'ios';
+  if(/Android/.test(ua)) return 'android';
+  if(/CrOS/.test(ua)) return 'cros';
+  if(/Mac/.test(ua) || plat.indexOf('Mac') === 0) return 'mac';
+  if(/Win/.test(ua) || plat.indexOf('Win') === 0) return 'win';
+  return 'other';
+}
+
+/* Order matters: Edge and Opera both carry "Chrome" in the string, and every
+   Chromium browser carries "Safari". */
+function detectBrowser(){
+  const ua = navigator.userAgent || '';
+  if(/Edg\//.test(ua)) return 'edge';
+  if(/OPR\//.test(ua)) return 'chrome';
+  if(/Firefox\//.test(ua)) return 'firefox';
+  if(/Chrome\//.test(ua)) return 'chrome';
+  if(/Safari\//.test(ua)) return 'safari';
+  return 'other';
+}
+
+const BROWSER_NOTE = {
+  chrome:  'Chrome lägger till Googles nätröster utöver systemets. De är märkta <b>nät</b> i listan ovan, kräver internet och behöver inte installeras.',
+  edge:    'Edge har egna svenska neuronröster som inte behöver installeras. De är märkta <b>nät</b> i listan ovan och heter <b>Online (Natural)</b>.',
+  safari:  'Safari visar bara röster som är installerade i systemet — inga nätröster. Har du precis installerat en röst måste sidan laddas om innan den syns.',
+  firefox: 'Firefox saknar taligenkänning, så appen kan inte lyssna här. Uppläsningen fungerar med systemets röster.',
+  other:   'Vilka röster som syns beror på webbläsaren: Chrome och Edge lägger till nätröster, Safari visar bara de som är installerade i systemet.'
+};
+
+function renderVoiceHelp(){
+  const os = detectOS();
+  /* Only two platforms let a web page open the right settings page: macOS
+     through x-apple.systempreferences: and Windows through the documented
+     ms-settings: scheme. iOS blocks it (App-Prefs is private API), Android
+     requires the target activity to be BROWSABLE and Settings is not, and
+     chrome:// pages can't be linked at all. Where it can't work the written
+     path is all there is, and saying so beats a button that does nothing. */
+  const card = h =>
+    '<h4>Fler röster — ' + h.name + '</h4>' +
+    '<p class="path">' + h.path + '</p>' +
+    '<p>' + h.body + '</p>' +
+    (h.open
+      ? '<p class="openrow"><a class="tbtn" href="' + h.open + '">' + h.openLabel + '</a>' +
+        '<span>Webbläsaren frågar först om den får öppna inställningarna.</span></p>'
+      : (h.manual ? '<p class="manual">' + h.manual + '</p>' : ''));
+  $('voiceBrowser').innerHTML = BROWSER_NOTE[detectBrowser()] || BROWSER_NOTE.other;
+  $('voiceHelp').innerHTML = card(VOICE_HELP[os] || VOICE_HELP.other);
+  $('voiceAll').innerHTML = Object.keys(VOICE_HELP)
+    .filter(k => k !== os)
+    .map(k => '<div class="note">' + card(VOICE_HELP[k]) + '</div>')
+    .join('');
+}
+
+/* ================= profiles + local storage ================= */
+/* Everything the app remembers lives in one localStorage key on this device.
+   No account, no backend, nothing leaves the browser — which also means the
+   browser is free to throw it away, hence the backup field in the Barn tab.
+
+   One profile per child: settings, text, reading position, score, and the
+   bank of words that have been hard over time. S.hard stays the per-run tally
+   that drives the review at the end of a text; the bank is the long game. */
+const STORE_KEY = 'laskompis:v1';
+const AVATARS = ['🦊','🐻','🐼','🐸','🦉','🐙','🦄','🐝','🐢','🐬','🚀','⭐'];
+const MAX_KIDS = 12;
+const BANK_MAX = 200;   // keeps the saved blob small and the word list readable
+
+let store = null;
+let saveTimer = null;
+let pendingAvatar = AVATARS[0];
+
+const clampNum = (v, lo, hi, dflt) =>
+  (typeof v === 'number' && isFinite(v)) ? Math.min(hi, Math.max(lo, v)) : dflt;
+
+function newProfile(name, avatar){
+  return {
+    id: 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2,6),
+    name: (name || 'Barn').slice(0,16),
+    avatar: AVATARS.includes(avatar) ? avatar : AVATARS[0],
+    text: PRESETS['Meningar'].join('\n'),
+    line: 0, score: 0, read: 0, sessions: 0,
+    hard: {},
+    settings: {
+      size:52, holdoff:8000, strict:'normal',
+      rate:0.9, voice:null, sndOk:false, sndFail:false, vol:0.85
+    }
+  };
+}
+
+/* Nothing read back is trusted: the blob is editable by hand and comes back
+   in through the backup field. Every value is clamped or replaced by the
+   default rather than believed. */
+function sanitize(raw){
+  if(!raw || typeof raw !== 'object' || !Array.isArray(raw.profiles)) return null;
+  const profiles = raw.profiles.map(p=>{
+    if(!p || typeof p !== 'object') return null;
+    const o = newProfile(typeof p.name === 'string' ? p.name : 'Barn', p.avatar);
+    if(typeof p.id === 'string' && p.id) o.id = p.id.slice(0,40);
+    if(typeof p.text === 'string' && p.text.trim()) o.text = p.text.slice(0,20000);
+    o.line     = clampNum(p.line, 0, 9999, 0);
+    o.score    = clampNum(p.score, 0, 1e9, 0);
+    o.read     = clampNum(p.read, 0, 1e9, 0);
+    o.sessions = clampNum(p.sessions, 0, 1e9, 0);
+    if(p.hard && typeof p.hard === 'object' && !Array.isArray(p.hard)){
+      // keep the most frequent words, the same way noteHard trims the bank —
+      // taking whichever keys happened to come first would drop the words that
+      // matter most from an oversized backup
+      Object.keys(p.hard)
+        .filter(k => k.length && k.length < 40 && clampNum(p.hard[k], 1, 1e6, 0))
+        .sort((a,b) => clampNum(p.hard[b],1,1e6,0) - clampNum(p.hard[a],1,1e6,0))
+        .slice(0, BANK_MAX)
+        .forEach(k=>{ o.hard[k] = clampNum(p.hard[k], 1, 1e6, 0); });
+    }
+    const st = (p.settings && typeof p.settings === 'object') ? p.settings : {};
+    o.settings = {
+      size:    clampNum(st.size, 28, 86, 52),
+      holdoff: clampNum(st.holdoff, 1000, 20000, 8000),
+      strict:  STRICTNESS[st.strict] ? st.strict : 'normal',
+      rate:    clampNum(st.rate, 0.6, 1.6, 0.9),
+      voice:   typeof st.voice === 'string' ? st.voice.slice(0,90) : null,
+      sndOk:   !!st.sndOk,
+      sndFail: !!st.sndFail,
+      vol:     clampNum(st.vol, 0, 1, 0.85)
+    };
+    return o;
+  }).filter(Boolean).slice(0, MAX_KIDS);
+  if(!profiles.length) return null;
+  /* Ids address a profile, so duplicates would make every copy but the first
+     unreachable — switching to one would silently land on the other. A
+     hand-edited backup is the likely source, so re-id rather than drop. */
+  const seen = new Set();
+  profiles.forEach(p=>{
+    while(seen.has(p.id)) p.id = 'p' + Math.random().toString(36).slice(2,10);
+    seen.add(p.id);
+  });
+  const active = profiles.some(p=>p.id===raw.active) ? raw.active : profiles[0].id;
+  return { v:1, active, profiles };
+}
+
+/* Storage can be missing or full — private windows, disabled cookies, a
+   locked-down school device. The app then simply runs without memory
+   instead of breaking. */
+function saveNow(){
+  clearTimeout(saveTimer); saveTimer = null;
+  if(!store) return;
+  try{ localStorage.setItem(STORE_KEY, JSON.stringify(store)); }catch(e){}
+}
+/* Sliders fire on every pixel — coalesce the writes. */
+function saveSoon(){
+  if(saveTimer) return;
+  saveTimer = setTimeout(saveNow, 500);
+}
+
+function profile(){
+  if(!store) return null;
+  return store.profiles.find(p=>p.id===store.active) || store.profiles[0] || null;
+}
+
+/* Copies the live state onto the active profile. Called from anywhere that
+   changes something worth keeping; the write itself is debounced. */
+function remember(){
+  const p = profile(); if(!p) return;
+  p.settings = {
+    size:S.size, holdoff:S.holdoff, strict:S.strict, rate:S.rate,
+    voice:S.voiceName, sndOk:S.sndOk, sndFail:S.sndFail, vol:S.vol
+  };
+  /* During the hard-word review S.lines holds the review words, not the text —
+     saving then would replace the child's reading text with six loose words. */
+  if(!S.reviewing){ p.text = S.lines.join('\n'); p.line = S.line; }
+  p.score = S.score;
+  saveSoon();
+}
+
+function applyProfile(p){
+  const st = p.settings;
+  setSize(st.size); setHold(st.holdoff); setRate(st.rate); setVol(st.vol);
+  setStrict(st.strict); setSndOk(st.sndOk); setSndFail(st.sndFail);
+  S.voiceName = st.voice;
+  S.voice = null;
+  if(window.speechSynthesis) loadVoices();
+
+  S.reviewing = false; S.source = null;
+  S.hard.clear(); $('roHard').textContent = 0;
+  S.score = p.score; S.misses = 0; S.lats = [];
+  $('roLat').textContent = '–'; $('roMed').textContent = '–';
+
+  const lines = p.text.split('\n').map(x=>x.trim()).filter(Boolean);
+  S.lines = lines.length ? lines : PRESETS['Meningar'].slice();
+  S.line  = Math.min(p.line, S.lines.length-1);
+  $('txt').value = S.lines.join('\n');
+  loadLine();
+  markActivePreset();
+  renderProfileBar();
+  renderKids();
+}
+
+function switchProfile(id){
+  if(!store || id === store.active) return;
+  if(S.running) stop();
+  remember();                 // flush the outgoing child before the swap
+  store.active = id;
+  saveNow();
+  const p = profile();
+  applyProfile(p);
+  setHint('Hej ' + p.name + '! Tryck på Börja läsa när du är redo.');
+}
+
+/* ================= profile UI ================= */
+function renderProfileBar(){
+  const p = profile(); if(!p) return;
+  $('profAv').textContent = p.avatar;
+  $('profNm').textContent = p.name;
+}
+
+function renderKids(){
+  const box = $('kids');
+  box.innerHTML = '';
+  if(!store) return;
+  store.profiles.forEach(p=>{
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'kid' + (p.id===store.active ? ' active' : '');
+    const av = document.createElement('span');
+    av.className = 'av';
+    av.textContent = p.avatar;
+    const nm = document.createElement('span');
+    nm.textContent = p.name;         // textContent: the name is typed by hand
+    b.appendChild(av); b.appendChild(nm);
+    b.onclick = ()=> switchProfile(p.id);
+    box.appendChild(b);
+  });
+  renderKidStats();
+}
+
+function renderKidStats(){
+  const p = profile(); if(!p) return;
+  $('kidName').textContent = p.avatar + ' ' + p.name;
+
+  const words = Object.keys(p.hard);
+  const box = $('kidStats');
+  box.innerHTML = '';
+  [['Poäng',p.score],['Meningar',p.read],['Lässtunder',p.sessions],['Svåra ord',words.length]]
+    .forEach(([k,v])=>{
+      const d = document.createElement('div');
+      d.className = 'stat';
+      d.appendChild(document.createTextNode(k));
+      const b = document.createElement('b');
+      b.textContent = v;
+      d.appendChild(b);
+      box.appendChild(d);
+    });
+
+  const wb = $('kidWords');
+  wb.innerHTML = '';
+  words.sort((a,b)=>p.hard[b]-p.hard[a]).slice(0,18).forEach(w=>{
+    const sp = document.createElement('span');
+    sp.textContent = w;
+    const n = document.createElement('b');
+    n.textContent = p.hard[w];
+    sp.appendChild(n);
+    wb.appendChild(sp);
+  });
+}
+
+function buildAvatars(){
+  const box = $('avpick');
+  box.innerHTML = '';
+  AVATARS.forEach(a=>{
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = a;
+    b.setAttribute('aria-label', 'Välj figur');
+    b.setAttribute('aria-pressed', String(a===pendingAvatar));
+    b.onclick = ()=>{ pendingAvatar = a; buildAvatars(); };
+    box.appendChild(b);
+  });
+}
+
+let kidMsgTimer = null;
+function kidMsg(text, bad){
+  const el = $('kidMsg');
+  el.textContent = text;
+  el.className = 'msg' + (bad ? ' bad' : '');
+  clearTimeout(kidMsgTimer);
+  kidMsgTimer = setTimeout(()=>{ el.textContent = ''; }, 7000);
+}
+
+/* ================= install as an app ================= */
+/* This earns its own place in the Barn tab: an installed app is what keeps
+   the saved profiles safe from Safari's habit of clearing storage for sites
+   nobody has opened in a week. */
+let installPrompt = null;
+
+function isInstalled(){
+  return matchMedia('(display-mode: standalone)').matches ||
+         matchMedia('(display-mode: fullscreen)').matches ||
+         navigator.standalone === true;
+}
+
+function renderInstall(){
+  const el = $('installNote');
+  if(!el) return;
+
+  if(isInstalled()){
+    el.innerHTML = '<p>Appen är sparad på enheten. Den startar direkt, tar hela skärmen — och den sparade progressen ligger kvar även efter en läspaus.</p>';
+    return;
+  }
+
+  /* Chrome hands us the install prompt; nobody else does. */
+  if(installPrompt){
+    el.innerHTML =
+      '<p>Sparad på enheten startar appen direkt och tar hela skärmen, och progressen skyddas från att webbläsaren rensar lagringen.</p>' +
+      '<p class="openrow"><button class="tbtn" id="installBtn">Lägg till på enheten</button></p>';
+    $('installBtn').onclick = async ()=>{
+      const prompt = installPrompt;
+      installPrompt = null;              // the event is single-use
+      try{ await prompt.prompt(); await prompt.userChoice; }catch(e){}
+      renderInstall();
+    };
+    return;
+  }
+
+  el.innerHTML = detectOS()==='ios'
+    ? '<p>Tryck på <b>Dela</b>-ikonen och välj <b>Lägg till på hemskärmen</b>. På iPhone är det också det enda som skyddar den sparade progressen — Safari rensar annars lagringen efter ungefär en veckas inaktivitet.</p>'
+    : '<p>Spara appen via webbläsarens meny — <b>Installera app</b> eller <b>Lägg till på hemskärmen</b>. Då startar den direkt och progressen ligger kvar.</p>';
+}
+
+window.addEventListener('beforeinstallprompt', e=>{
+  e.preventDefault();          // keep the browser's own bar out of the child's way
+  installPrompt = e;
+  renderInstall();
+});
+window.addEventListener('appinstalled', ()=>{ installPrompt = null; renderInstall(); });
+
+/* The service worker is what makes the app installable and lets it start
+   without a network. Best-effort: a failure here must never take the reading
+   app down with it. */
+if('serviceWorker' in navigator && window.isSecureContext){
+  window.addEventListener('load', ()=>{
+    navigator.serviceWorker.register('./sw.js').catch(()=>{});
+  });
+}
+
+function initStore(){
+  let raw = null;
+  try{ raw = JSON.parse(localStorage.getItem(STORE_KEY) || 'null'); }catch(e){}
+  store = sanitize(raw);
+  if(!store){
+    /* First run — a single nameless profile, so the app opens exactly as it
+       always has instead of demanding a setup step before anyone can read. */
+    const p = newProfile('Barn', AVATARS[0]);
+    store = { v:1, active:p.id, profiles:[p] };
+    saveNow();
+  }
 }
 
 /* ================= wiring ================= */
@@ -1441,7 +2057,8 @@ $('sayBtn').onclick = e=>{
 const TAB_SUB = {
   text:    'Klistra in läsläxan, en mening per rad.',
   reading: 'Hur texten visas och hur mycket appen släpper igenom.',
-  voice:   'Hur appen låter när den läser upp ord och uppmuntran.'
+  voice:   'Hur appen låter när den läser upp ord och uppmuntran.',
+  kids:    'Flera barn på samma enhet, var och en med egna inställningar.'
 };
 
 function showTab(name){
@@ -1452,18 +2069,45 @@ function showTab(name){
   $('sheetSub').textContent = TAB_SUB[name] || '';
   $('sheet').querySelector('.cardbody').scrollTop = 0;
   if(name==='voice') loadVoices();
+  if(name==='kids'){ renderKids(); buildAvatars(); renderInstall(); }
 }
 
 document.querySelectorAll('.tab').forEach(t=>{
   t.onclick = ()=> showTab(t.dataset.tab);
 });
 
-$('cbOk').onchange   = e=>{ S.sndOk = e.target.checked; if(S.sndOk) playOk(); };
-$('cbFail').onchange = e=>{ S.sndFail = e.target.checked; if(S.sndFail) playFail(); };
-$('rVol').oninput = e=>{
-  S.vol = +e.target.value/100;
-  $('vVol').textContent = e.target.value+' %';
-};
+/* One setter per adjustable value, used both by the controls and by the
+   restore path. Anything that only lived in an event handler would silently
+   fail to come back when a profile is loaded. */
+function setSize(v){
+  S.size = v;
+  document.documentElement.style.setProperty('--read-size', v+'px');
+  $('rSize').value = v;
+  $('vSize').textContent = v+' px';
+}
+function setHold(v){
+  S.holdoff = v;
+  $('rHold').value = v;
+  $('vHold').textContent = (v/1000).toFixed(1).replace('.',',')+' s';
+}
+function setRate(v){
+  S.rate = v;
+  $('rRate').value = v;
+  $('vRate').textContent = v.toFixed(2).replace('.',',');
+}
+function setVol(v){
+  S.vol = v;
+  const pct = Math.round(v*100);
+  $('rVol').value = pct;
+  $('vVol').textContent = pct+' %';
+}
+function setStrict(v){ S.strict = v; $('strict').value = v; }
+function setSndOk(v){ S.sndOk = v; $('cbOk').checked = v; }
+function setSndFail(v){ S.sndFail = v; $('cbFail').checked = v; }
+
+$('cbOk').onchange   = e=>{ setSndOk(e.target.checked); if(S.sndOk) playOk(); remember(); };
+$('cbFail').onchange = e=>{ setSndFail(e.target.checked); if(S.sndFail) playFail(); remember(); };
+$('rVol').oninput = e=>{ setVol(+e.target.value/100); remember(); };
 /* Sound the new level directly rather than through playOk(), which is silent
    while the chime is switched off — the slider must always be audible. */
 $('rVol').onchange = ()=>{ tone(1046.5, 0, 0.20, 0.5); };
@@ -1480,20 +2124,100 @@ $('setupBtn').onclick = ()=>{ loadVoices(); $('sheet').classList.add('open'); };
 $('closeBtn').onclick = ()=>{ applyText(); $('sheet').classList.remove('open'); };
 $('sheet').onclick = e=>{ if(e.target===$('sheet')){ applyText(); $('sheet').classList.remove('open'); } };
 
-$('rSize').oninput = e=>{
-  document.documentElement.style.setProperty('--read-size', e.target.value+'px');
-  $('vSize').textContent = e.target.value+' px';
+/* ---------- profiles ---------- */
+$('profBtn').onclick = ()=>{ showTab('kids'); $('sheet').classList.add('open'); };
+
+$('addKid').onclick = ()=>{
+  const name = $('newName').value.trim();
+  if(!name){ kidMsg('Skriv ett namn först.', true); $('newName').focus(); return; }
+  if(store.profiles.length >= MAX_KIDS){ kidMsg('Fler än ' + MAX_KIDS + ' barn får inte plats.', true); return; }
+  if(S.running) stop();
+  remember();                      // the child being left keeps its progress
+  const p = newProfile(name, pendingAvatar);
+  store.profiles.push(p);
+  store.active = p.id;
+  saveNow();
+  applyProfile(p);
+  $('newName').value = '';
+  // step to the next figure so two children don't end up with the same one
+  pendingAvatar = AVATARS[(AVATARS.indexOf(pendingAvatar)+1) % AVATARS.length];
+  buildAvatars();
+  kidMsg(name + ' är tillagd och vald.');
 };
-$('rHold').oninput = e=>{
-  S.holdoff = +e.target.value;
-  $('vHold').textContent = (S.holdoff/1000).toFixed(1).replace('.',',')+' s';
-  armHoldoff();
+
+$('newName').onkeydown = e=>{ if(e.key==='Enter'){ e.preventDefault(); $('addKid').click(); } };
+
+$('renameKid').onclick = ()=>{
+  const p = profile(); if(!p) return;
+  const name = (prompt('Vad heter barnet?', p.name) || '').trim();
+  if(!name) return;
+  p.name = name.slice(0,16);
+  saveNow();
+  renderProfileBar(); renderKids();
 };
-$('rRate').oninput = e=>{
-  S.rate = +e.target.value;
-  $('vRate').textContent = S.rate.toFixed(2).replace('.',',');
+
+$('delKid').onclick = ()=>{
+  const p = profile(); if(!p) return;
+  if(store.profiles.length < 2){ kidMsg('Det måste finnas minst ett barn.', true); return; }
+  if(!confirm('Ta bort ' + p.name + ' och all sparad progress för barnet?')) return;
+  if(S.running) stop();
+  store.profiles = store.profiles.filter(x=>x.id!==p.id);
+  store.active = store.profiles[0].id;
+  saveNow();
+  applyProfile(profile());
+  kidMsg(p.name + ' är borttagen.');
 };
-$('strict').onchange = e=>{ S.strict = e.target.value; };
+
+$('clearWords').onclick = ()=>{
+  const p = profile(); if(!p) return;
+  p.hard = {};
+  S.hard.clear();
+  $('roHard').textContent = 0;
+  saveNow(); renderKidStats();
+  kidMsg('Listan över svåra ord är tömd.');
+};
+
+$('clearScore').onclick = ()=>{
+  const p = profile(); if(!p) return;
+  p.score = 0; p.read = 0; p.sessions = 0;
+  S.score = 0;
+  updateReadouts(); saveNow(); renderKidStats();
+  kidMsg('Poäng och statistik är nollställda.');
+};
+
+/* The only way data leaves the device, and the only way it survives the
+   browser deciding to clear its storage: plain text the adult keeps. */
+$('exportBtn').onclick = ()=>{
+  remember(); saveNow();
+  const box = $('backup');
+  box.value = JSON.stringify(store);
+  box.focus(); box.select();
+  kidMsg('Kopiera texten och lägg undan den någonstans.');
+};
+
+$('importBtn').onclick = ()=>{
+  let raw = null;
+  try{ raw = JSON.parse($('backup').value); }catch(e){}
+  const next = sanitize(raw);
+  if(!next){ kidMsg('Det där gick inte att läsa som en säkerhetskopia.', true); return; }
+  if(!confirm('Ersätta alla barn och all progress på den här enheten med kopian?')) return;
+  if(S.running) stop();
+  store = next;
+  saveNow();
+  applyProfile(profile());
+  kidMsg('Kopian är inläst.');
+};
+
+/* A debounced write can still be pending when the tab goes away — on mobile
+   the page is often killed outright rather than unloaded. */
+const flush = ()=>{ remember(); saveNow(); };
+window.addEventListener('pagehide', flush);
+document.addEventListener('visibilitychange', ()=>{ if(document.hidden) flush(); });
+
+$('rSize').oninput = e=>{ setSize(+e.target.value); remember(); };
+$('rHold').oninput = e=>{ setHold(+e.target.value); armHoldoff(); remember(); };
+$('rRate').oninput = e=>{ setRate(+e.target.value); remember(); };
+$('strict').onchange = e=>{ setStrict(e.target.value); remember(); };
 
 /* Only form controls may swallow the shortcuts. Requiring document.body as the
    target instead would kill them for good once any button had been clicked,
@@ -1523,10 +2247,12 @@ document.addEventListener('keydown', e=>{
 /* ================= init ================= */
 buildPresets();
 buildSide();
+buildAvatars();
 setIcons();
-$('txt').value = S.lines.join('\n');
-loadLine();
-markActivePreset();
+renderVoiceHelp();
+renderInstall();
+initStore();
+applyProfile(profile());   // sets the text, the position, the settings and the voice
 if(window.speechSynthesis){
   loadVoices();
   speechSynthesis.onvoiceschanged = loadVoices;
