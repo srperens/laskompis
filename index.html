@@ -309,6 +309,13 @@ body{
 }
 /* Which code is actually running — the first thing worth knowing when something
    behaves differently on one device than another. */
+/* The raw list, for when the picker and the system settings disagree about
+   which voices exist — on iOS they routinely do. */
+.vdump{
+  font-family:'JetBrains Mono',monospace;font-size:11px;line-height:1.6;
+  color:var(--faded);max-height:220px;overflow:auto;
+}
+.vdump div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .build{
   font-family:'JetBrains Mono',monospace;font-size:11px;
   color:var(--faded);letter-spacing:.02em;white-space:nowrap;
@@ -598,6 +605,10 @@ details.osnote > div{margin-top:14px}
           <details class="osnote">
             <summary>Andra operativsystem</summary>
             <div id="voiceAll"></div>
+          </details>
+          <details class="osnote">
+            <summary>Rösterna webbläsaren lämnar ut</summary>
+            <div class="vdump" id="voiceDump"></div>
           </details>
         </div>
         <div class="field">
@@ -1879,6 +1890,22 @@ function loadVoices(){
     remember();
     testVoice();
   };
+
+  renderVoiceDump();
+}
+
+/* When the picker and the system settings disagree about which voices exist,
+   this is what settles it: exactly what getVoices() handed over, unfiltered and
+   unsorted. On iOS the answer is usually that the downloaded voice was never in
+   it — see the note under the list. */
+function renderVoiceDump(){
+  const esc = t => String(t).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'})[c]);
+  $('voiceDump').innerHTML = allVoices.length
+    ? allVoices.map(v =>
+        '<div>' + esc(v.name) + ' · ' + esc(v.lang || '?') +
+        ' · ' + (v.localService ? 'lokal' : 'nät') +
+        ' · ' + esc(v.voiceURI || '—') + '</div>').join('')
+    : '<div>Listan är tom.</div>';
 }
 
 function testVoice(){
@@ -1891,7 +1918,14 @@ function testVoice(){
    and every platform hides that behind a different menu. Paths checked against
    Apple's, Microsoft's and Google's own documentation in augusti 2026. Apple
    renamed the menu from "Talat innehåll" to "Uppläsning och tal" in macOS 26
-   and iOS 26, so both names are given. */
+   and iOS 26, so both names are given.
+
+   iOS is the exception with no path at all: WebKit hands a page only the
+   pre-installed voices, and a downloaded Alva (Premium) is never among them.
+   Confirmed by an Apple engineer on the developer forums — "It is expected that
+   with Web Speech APIs only the pre-installed voices are available. Optionally
+   downloadable voices are not available." (thread 723503). Sending a parent off
+   to fetch a voice that cannot work is worse than saying so. */
 const VOICE_HELP = {
   mac: {
     name: 'macOS',
@@ -1902,9 +1936,9 @@ const VOICE_HELP = {
   },
   ios: {
     name: 'iPhone och iPad',
-    path: 'Inställningar › Hjälpmedel › Uppläsning och tal › Röster › Svenska',
-    body: 'Ladda ner <b>Alva</b> i kvaliteten <b>Premium</b> om den erbjuds — bäst av de svenska, och gratis. <b>Klara</b> är alternativet. Menyn hette <b>Talat innehåll</b> före iOS 26.<br>Ladda om sidan efteråt, annars ser Safari inte den nya rösten.',
-    manual: 'iOS släpper inte in webbsidor i Inställningar — den biten får du gå själv.'
+    path: 'Ingen väg dit — iOS lämnar bara ut sina förinstallerade röster',
+    body: 'Här hjälper det tyvärr inte att ladda ner en röst. Apple ger webbsidor enbart de röster som redan finns i systemet, och de nedladdningsbara — <b>Alva (Premium)</b> och <b>Enhanced</b> — lämnas aldrig ut, hur rätt de än är installerade. Det gäller varenda webbläsare på iPhone, eftersom alla kör Apples motor. Vill du höra de bra svenska rösterna får det bli en dator; på telefonen är den förinstallerade <b>Alva</b> det som finns.',
+    manual: 'Listan längst ner visar exakt vad webbläsaren lämnade ut, om du vill se det själv.'
   },
   win: {
     name: 'Windows',
@@ -1959,7 +1993,7 @@ function detectBrowser(){
 const BROWSER_NOTE = {
   chrome:  'Chrome lägger till Googles nätröster utöver systemets — märkta <b>nät</b>, kräver internet, ingen installation.',
   edge:    'Edge har egna svenska neuronröster, märkta <b>nät</b> och <b>Online (Natural)</b>. Ingen installation.',
-  safari:  'Safari visar bara röster som är installerade i systemet. En nyss nedladdad röst syns först efter att sidan laddats om.',
+  safari:  'Safari visar bara systemets röster, inga nätröster. På iPhone och iPad dessutom bara de förinstallerade — nedladdade röster lämnas aldrig ut. På Mac syns även de nedladdade, efter en omladdning av sidan.',
   firefox: 'Firefox saknar taligenkänning, så appen kan inte lyssna här. Uppläsningen fungerar.',
   other:   'Vilka röster som syns beror på webbläsaren: Chrome och Edge lägger till nätröster, Safari bara systemets.'
 };
