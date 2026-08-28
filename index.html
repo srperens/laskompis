@@ -305,7 +305,14 @@ body{
 
 .card > footer{
   padding:14px 26px 18px;border-top:1px solid var(--rule);
-  flex:0 0 auto;display:flex;justify-content:flex-end;
+  flex:0 0 auto;display:flex;justify-content:space-between;align-items:center;gap:14px;
+}
+/* Which code is actually running — the first thing worth knowing when something
+   behaves differently on one device than another. */
+.build{
+  font-family:'JetBrains Mono',monospace;font-size:11px;
+  color:var(--faded);letter-spacing:.02em;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;
 }
 .field{margin-bottom:20px}
 .field label{
@@ -663,6 +670,7 @@ details.osnote > div{margin-top:14px}
     </div>
 
     <footer>
+      <p class="build" id="build"></p>
       <button class="big primary" id="closeBtn">Klart</button>
     </footer>
 
@@ -1988,6 +1996,18 @@ function renderMicNote(){
   $('micField').hidden = false;
 }
 
+/* There is no build step to stamp a version into, and a constant bumped by
+   hand is a constant that gets forgotten. The page's own Last-Modified is the
+   deploy time exactly, needs no maintenance, and rides along in the cached copy
+   — so it stays truthful offline, where knowing whether the update actually
+   landed matters most. */
+function renderBuild(){
+  const raw = document.lastModified;
+  const d = new Date(raw);
+  $('build').textContent = 'Version ' +
+    (isFinite(d) ? d.toLocaleString('sv-SE', {dateStyle:'short', timeStyle:'short'}) : raw);
+}
+
 /* ================= profiles + local storage ================= */
 /* Everything the app remembers lives in one localStorage key on this device.
    No account, no backend, nothing leaves the browser — which also means the
@@ -2552,6 +2572,7 @@ buildTargets();
 setIcons();
 renderVoiceHelp();
 renderMicNote();
+renderBuild();
 renderInstall();
 initStore();
 applyProfile(profile());   // sets the text, the position, the settings and the voice
