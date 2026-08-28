@@ -8,6 +8,17 @@
 <meta name="apple-mobile-web-app-title" content="Läskompis">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="theme-color" content="#E9EEF2">
+<!-- The optional neural voice's library imports 'onnxruntime-web/wasm' as a bare
+     specifier, which a page cannot resolve on its own. This points it at the
+     matching version's ESM build and keeps the JavaScript glue and the
+     WebAssembly binary in step. Inert until a neural voice is chosen. -->
+<script type="importmap">
+{
+  "imports": {
+    "onnxruntime-web/wasm": "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/esm/ort.wasm.min.js"
+  }
+}
+</script>
 <title>Läskompis</title>
 <link rel="manifest" href="./manifest.webmanifest">
 <link rel="icon" href="./icon-192.png" sizes="192x192" type="image/png">
@@ -600,6 +611,7 @@ details.osnote > div{margin-top:14px}
             <button class="tbtn" id="testVoiceBtn" title="Hör hur rösten låter">Prova</button>
           </div>
           <p class="vinfo" id="voiceInfo"></p>
+          <p class="vinfo" id="piperNote" hidden></p>
           <div class="note" id="voiceBrowser"></div>
           <div class="note" id="voiceHelp"></div>
           <details class="osnote">
@@ -1437,42 +1449,242 @@ function armHoldoff(){
    and therefore run faster. 'word' is the default since it is the
    sensitive use case. */
 function speak(text, kind='word'){
+  const rate = kind==='phrase' ? Math.min(1.8, S.rate * 1.28) : S.rate;
+  if(piperState === 'ready') speakPiper(text, rate);
+  else                       speakSystem(text, rate);
+}
+
+/* Both engines share this bookkeeping.
+
+   Dropping onresult events while speaking is not enough: the recognizer keeps
+   transcribing our own TTS into its cumulative result list, and those tokens
+   would be aligned the moment the gate lifts — letting the help feature score
+   the word by saying it itself. Throwing the transcript away afterwards is the
+   only reliable way to discard what the app said.
+
+   Each utterance owns the shared speaking state only for its own turn. A
+   cancelled utterance's end event arrives after the next one has already
+   started, and without the sequence check it would clear that one's watchdog
+   and un-gate the microphone mid-speech. The timeout is the breaker for an
+   engine that never reports back at all — Chrome drops onend now and then,
+   especially after cancel(), and without it the microphone would stay muted for
+   the rest of the session. */
+function beginTurn(text){
+  S.speaking = true;
+  micGate(true);
+  const myTurn = ++S.speakSeq;
+  const release = ()=>{
+    if(S.speakSeq !== myTurn) return;
+    clearTimeout(S.speakTimer);
+    S.speaking = false; micGate(false);
+    resetTranscript();
+    armHoldoff();
+  };
+  clearTimeout(S.speakTimer);
+  S.speakTimer = setTimeout(release, Math.min(15000, 1200 + text.length*120));
+  return release;
+}
+
+function speakSystem(text, rate){
   if(!window.speechSynthesis) return;
   // only interrupt when something is actually queued — a gratuitous cancel()
   // right before speak() can wedge the synthesizer on iOS
   if(speechSynthesis.speaking || speechSynthesis.pending) speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
   u.lang='sv-SE';
-  u.rate = kind==='phrase' ? Math.min(1.8, S.rate * 1.28) : S.rate;
-  if(S.voice) u.voice=S.voice;
-  S.speaking=true;
-  micGate(true);
-  /* Dropping onresult events while speaking is not enough: the recognizer keeps
-     transcribing our own TTS into its cumulative result list, and those tokens
-     would be aligned the moment the gate lifts — letting the help feature score
-     the word by saying it itself. Throwing the transcript away afterwards is the
-     only reliable way to discard what the app said. */
-  /* Each utterance owns the shared speaking state only for its own turn.
-     A cancelled utterance's onend arrives after the next one has already
-     started, and without this check it would clear that one's watchdog and
-     un-gate the microphone mid-speech. */
-  const myTurn = ++S.speakSeq;
-  const release = ()=>{
-    if(S.speakSeq !== myTurn) return;
-    clearTimeout(S.speakTimer);
-    S.speaking=false; micGate(false);
-    resetTranscript();
-    armHoldoff();
-  };
+  u.rate = rate;
+  /* S.voice always holds a system voice, even while a neural one is chosen —
+     that is what makes it the fallback. */
+  if(S.voice) u.voice = S.voice;
+  const release = beginTurn(text);
   u.onend = release;
   u.onerror = release;
-  /* Chrome sometimes misses onend, especially after cancel(). Without this
-     breaker the microphone stays muted for the rest of the session. */
-  clearTimeout(S.speakTimer);
-  S.speakTimer = setTimeout(release, Math.min(15000, 1200 + text.length*120));
   speechSynthesis.speak(u);
   // iOS sometimes leaves the synthesizer paused; resume() is a no-op elsewhere
   speechSynthesis.resume();
+}
+
+/* ================= optional neural voice ================= */
+/* iOS hands a web page only the voices that shipped with the system, so on an
+   iPhone the Swedish choice is the compact Alva and nothing else — Apple states
+   plainly that downloadable voices are not exposed to Web Speech. A neural model
+   running locally in WebAssembly is the only way past that.
+
+   It costs a large download, so it is strictly opt-in: chosen from the same
+   voice list, never fetched unasked, and the system voices are untouched and
+   remain the default. If anything at all goes wrong the app drops back to the
+   system voice — a reading app must never fall silent on a child waiting for a
+   word. */
+const PIPER = [
+  { id:'sv_SE-nst-medium', name:'Svensk neural röst (NST)', mb:60 }
+];
+const PIPER_KEY = 'piper:';
+const isPiperKey = k => typeof k === 'string' && k.indexOf(PIPER_KEY) === 0;
+const piperIdOf  = k => k.slice(PIPER_KEY.length);
+
+/* The package must come down untouched. Through esm.sh the phonemizer — an
+   Emscripten build that decides by `typeof process` whether it is in Node —
+   sees an injected process shim, takes the Node path and dies reading its data
+   file with fs.readFile. And onnxruntime-web's JavaScript and WebAssembly must
+   be the same version, which is what the import map in <head> pins: the library
+   asks for the bare name 'onnxruntime-web/wasm', and its own wasmPaths point at
+   1.18.0. */
+const PIPER_LIB = 'https://cdn.jsdelivr.net/npm/@mintplex-labs/piper-tts-web@1.0.5/dist/piper-tts-web.js';
+const PIPER_WASM = {
+  onnxWasm:  'https://cdnjs.cloudflare.com/ajax/libs/onnxruntime-web/1.18.0/',
+  piperWasm: 'https://cdn.jsdelivr.net/npm/@diffusionstudio/piper-wasm@1.0.0/build/piper_phonemize.wasm',
+  piperData: 'https://cdn.jsdelivr.net/npm/@diffusionstudio/piper-wasm@1.0.0/build/piper_phonemize.data'
+};
+
+let piperLib = null;        // the module, imported the first time it is needed
+let piperSession = null;
+let piperFor = null;        // which voice the session was built for
+let piperState = 'off';     // off | busy | ready | failed
+let piperRelease = null;    // the current turn's release, called on 'ended'
+let piperUrl = null;
+
+/* Playback goes through a media element, not Web Audio. On iPhone the hardware
+   mute switch silences Web Audio — it lands in the ambient audio session —
+   while a media element gets the playback session and is heard regardless.
+   speechSynthesis is audible for the same reason. */
+const piperPlayer = new Audio();
+piperPlayer.setAttribute('playsinline', '');
+piperPlayer.preload = 'auto';
+let piperUnlocked = false;
+
+piperPlayer.addEventListener('ended', ()=>{ if(piperRelease) piperRelease(); });
+piperPlayer.addEventListener('error', ()=>{ if(piperRelease) piperRelease(); });
+
+/* A tenth of a second of 8-bit silence, built rather than embedded. */
+function silentWav(ms = 100, rate = 8000){
+  const n = Math.round(rate * ms / 1000);
+  const b = new Uint8Array(44 + n);
+  const dv = new DataView(b.buffer);
+  const tag = (o,t)=>{ for(let i=0;i<t.length;i++) b[o+i] = t.charCodeAt(i); };
+  tag(0,'RIFF');  dv.setUint32(4, 36 + n, true); tag(8,'WAVE');
+  tag(12,'fmt '); dv.setUint32(16, 16, true);    dv.setUint16(20, 1, true);
+  dv.setUint16(22, 1, true); dv.setUint32(24, rate, true); dv.setUint32(28, rate, true);
+  dv.setUint16(32, 1, true); dv.setUint16(34, 8, true);
+  tag(36,'data'); dv.setUint32(40, n, true);
+  b.fill(128, 44);                       // 8-bit unsigned silence sits at 128
+  return new Blob([b], {type:'audio/wav'});
+}
+
+/* iOS only allows play() from inside a user interaction, and the synthesised
+   blob is ready several awaits later — long after the tap. So the element is
+   unlocked once, during a real gesture, by playing silence through it; after
+   that the same element may be played programmatically for the rest of the
+   page's life. Call this synchronously from a handler, before any await. */
+function piperUnlock(){
+  if(piperUnlocked || !window.URL) return;
+  piperPlayer.src = URL.createObjectURL(silentWav());
+  piperPlayer.play().then(
+    ()=>{ piperUnlocked = true; },
+    /* The silence being cut off by the next sound is the intended outcome, and
+       the unlock still counted. Anything else means the gesture was gone. */
+    e =>{ if(e && e.name === 'AbortError') piperUnlocked = true; }
+  );
+}
+
+function piperNote(msg){
+  const el = $('piperNote');
+  if(!el) return;
+  el.textContent = msg || '';
+  el.hidden = !msg;
+}
+
+function piperGiveUp(e){
+  piperState = 'failed';
+  piperSession = null; piperFor = null;
+  piperNote('Den neurala rösten kunde inte startas, så appen använder systemrösten.' +
+            (e && e.message ? ' (' + e.message + ')' : ''));
+}
+
+function piperOff(){
+  piperState = 'off';
+  piperSession = null; piperFor = null;
+  try{ piperPlayer.pause(); }catch(err){}
+  piperNote('');
+}
+
+/* allowDownload separates the two ways a neural voice becomes current: the adult
+   picking it here and now, and a profile arriving on a device that has never
+   seen it. The preference travels with the profile, the 60 MB does not, and
+   starting an unasked-for download on someone's data plan is not on. */
+async function piperEnsure(id, allowDownload){
+  if(piperState === 'ready' && piperFor === id) return;
+  if(piperState === 'busy') return;
+  piperState = 'busy';
+  piperSession = null; piperFor = null;
+  try{
+    piperNote('Förbereder rösten …');
+    if(!piperLib) piperLib = await import(PIPER_LIB);
+    let have = [];
+    try{ have = await piperLib.stored(); }catch(err){}
+    if(have.indexOf(id) === -1){
+      if(!allowDownload){
+        piperState = 'off';
+        piperNote('Den neurala rösten är vald men inte nedladdad på den här enheten. ' +
+                  'Välj den i listan igen för att hämta den.');
+        return;
+      }
+      const meta = PIPER.find(v => v.id === id);
+      await piperLib.download(id, p =>{
+        const pct = p.total ? Math.round(p.loaded / p.total * 100) : 0;
+        piperNote('Laddar ner rösten … ' + pct + ' % av ' + (meta ? meta.mb : '?') + ' MB');
+      });
+    }
+    piperNote('Startar rösten …');
+    piperSession = await piperLib.TtsSession.create({ voiceId: id, wasmPaths: PIPER_WASM });
+    piperFor = id;
+    piperState = 'ready';
+    piperNote('Neural röst aktiv. Den uttalar en del ord fel — talsyntesen bakom den ' +
+              'kan mindre svenska än Apples.');
+  }catch(e){
+    piperGiveUp(e);
+  }
+}
+
+/* Called when a profile is applied and at start-up: bring the neural voice back
+   if this device already has it, and never download for it. A failed attempt is
+   not retried on its own — picking the voice again is the retry. */
+function piperResume(){
+  if(!isPiperKey(S.voiceURI)){
+    if(piperState !== 'off') piperOff();
+    return;
+  }
+  if(piperState !== 'off') return;
+  piperEnsure(piperIdOf(S.voiceURI), false);
+}
+
+function speakPiper(text, rate){
+  const release = beginTurn(text);
+  piperRelease = release;
+  try{ piperPlayer.pause(); }catch(err){}
+  (async ()=>{
+    const blob = await piperSession.predict(text);
+    if(piperRelease !== release) return;      // a newer turn took over mid-synthesis
+    if(piperUrl) URL.revokeObjectURL(piperUrl);
+    piperUrl = URL.createObjectURL(blob);
+    /* The model has one fixed tempo, so the rate slider is applied on playback.
+       Media elements correct pitch by default, which is exactly what a slower
+       reading voice needs.
+
+       Order matters: assigning src runs the media load algorithm, and that resets
+       playbackRate to defaultPlaybackRate. Setting the default first makes the
+       load land on the right speed, and setting playbackRate again afterwards
+       covers a browser that does it the other way round. */
+    piperPlayer.preservesPitch = true;
+    piperPlayer.defaultPlaybackRate = rate;
+    piperPlayer.src = piperUrl;
+    piperPlayer.playbackRate = rate;
+    await piperPlayer.play();
+  })().catch(e =>{
+    /* Never leave the child in silence: hand this word to the system voice. */
+    piperGiveUp(e);
+    release();
+    speakSystem(text, rate);
+  });
 }
 
 /* simple half-duplex: ignore recognition while the app is speaking */
@@ -1682,6 +1894,7 @@ async function start(){
   if(S.starting) return;
   S.starting = true;
   try{
+    piperUnlock();   // synchronously, while the tap is still ours
     /* Speak BEFORE any await: iOS home-screen web apps (standalone mode) only
        allow the first speechSynthesis.speak() synchronously inside the user
        gesture — after awaiting the microphone it is silently blocked. */
@@ -1826,6 +2039,21 @@ function voiceQuality(v){
    middle rather than last — a Google or Microsoft voice beats a compact one. */
 const qRank = v => ({Premium:0, Enhanced:1, Siri:2, Kompakt:4})[voiceQuality(v)] ?? 3;
 
+/* Last in the list, so nothing changes for anyone who does not go looking. The
+   size belongs in the label: it is the one thing worth knowing before tapping. */
+function addPiperGroup(sel){
+  const g = document.createElement('optgroup');
+  g.label = 'Neural röst — laddas ner en gång';
+  PIPER.forEach(v =>{
+    const o = document.createElement('option');
+    o.value = PIPER_KEY + v.id;
+    o.textContent = v.name + '  ·  sv-SE  ·  ' + v.mb + ' MB';
+    g.appendChild(o);
+  });
+  sel.appendChild(g);
+  sel.onchange = onVoicePicked;
+}
+
 function loadVoices(){
   const sel = $('voice');
   allVoices = speechSynthesis.getVoices();
@@ -1835,6 +2063,12 @@ function loadVoices(){
        leave the list empty without ever firing it. Poll a few times before
        giving up; the list can also stay empty for good. */
     $('voiceInfo').textContent = 'Ingen röst hittad ännu — så här installerar du en:';
+    /* The neural voice needs no system voice behind it, and a device with none at
+       all is precisely where it is worth the most — so it goes into the list even
+       here, rather than being unreachable. */
+    sel.innerHTML = '';
+    addPiperGroup(sel);
+    if(isPiperKey(S.voiceURI)) sel.value = S.voiceURI;
     if(voiceTries < 12){ voiceTries++; setTimeout(loadVoices, 250); }
     return;
   }
@@ -1867,6 +2101,7 @@ function loadVoices(){
 
   addGroup('Svenska (' + sv.length + ')', sv);
   addGroup('Övriga språk — nödlösning', other);
+  addPiperGroup(sel);
 
   /* Fall back silently when the remembered voice isn't installed here, but keep
      S.voiceName and S.voiceURI untouched: plugging the same profile into a
@@ -1876,8 +2111,10 @@ function loadVoices(){
   const pick = allVoices.find(v=> voiceKey(v)===wantURI)
             || allVoices.find(v=> v.name===wantName)
             || sv[0] || allVoices[0];
+  /* S.voice stays a system voice even while a neural one is chosen — that is
+     what makes it the fallback the neural path drops back to. */
   S.voice = pick;
-  sel.value = voiceKey(pick);
+  sel.value = isPiperKey(S.voiceURI) ? S.voiceURI : voiceKey(pick);
 
   const best = sv.length ? voiceQuality(sv[0]) : '';
   $('voiceInfo').textContent = sv.length > 1
@@ -1887,15 +2124,30 @@ function loadVoices(){
       ? 'Bara en svensk röst hittad — så här får du fler:'
       : 'Ingen svensk röst hittad — så här installerar du en:';
 
-  sel.onchange = ()=>{
-    S.voice = allVoices.find(v=> voiceKey(v)===sel.value) || null;
-    S.voiceName = S.voice ? S.voice.name : null;
-    S.voiceURI  = S.voice ? voiceKey(S.voice) : null;
-    remember();
-    testVoice();
-  };
+  sel.onchange = onVoicePicked;
 
   renderVoiceDump();
+}
+
+function onVoicePicked(){
+  const sel = $('voice');
+  piperUnlock();                       // still inside the gesture
+  if(isPiperKey(sel.value)){
+    const id = piperIdOf(sel.value);
+    const meta = PIPER.find(v => v.id === id);
+    S.voiceName = meta ? meta.name : id;
+    S.voiceURI  = sel.value;
+    remember();
+    /* Picked deliberately, here, now — the one place a download may start. */
+    piperEnsure(id, true).then(()=>{ if(piperState === 'ready') testVoice(); });
+    return;
+  }
+  piperOff();
+  S.voice = allVoices.find(v=> voiceKey(v)===sel.value) || null;
+  S.voiceName = S.voice ? S.voice.name : null;
+  S.voiceURI  = S.voice ? voiceKey(S.voice) : null;
+  remember();
+  testVoice();
 }
 
 /* When the picker and the system settings disagree about which voices exist,
@@ -1913,6 +2165,7 @@ function renderVoiceDump(){
 }
 
 function testVoice(){
+  piperUnlock();
   speak('Hej! Katten satt på mattan och tittade ut genom fönstret.', 'phrase');
 }
 
@@ -2190,6 +2443,7 @@ function applyProfile(p){
   S.voiceURI  = st.voiceURI || null;
   S.voice = null;
   if(window.speechSynthesis){ voiceTries = 0; loadVoices(); }
+  piperResume();
 
   S.reviewing = false; S.source = null;
   S.hard.clear(); $('roHard').textContent = 0;
@@ -2561,6 +2815,7 @@ const goAway = ()=>{
      half-duplex gate it was going to lift would then keep the microphone muted
      for the rest of the session. Retire the turn by hand. */
   if(window.speechSynthesis) speechSynthesis.cancel();
+  try{ piperPlayer.pause(); }catch(e){}
   S.speakSeq++;
   clearTimeout(S.speakTimer);
   S.speaking = false;
@@ -2624,6 +2879,7 @@ if(window.speechSynthesis){
   loadVoices();
   speechSynthesis.onvoiceschanged = loadVoices;
 }
+piperResume();
 </script>
 </body>
 </html>
