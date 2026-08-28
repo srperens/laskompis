@@ -119,6 +119,14 @@ const PRESETS = {
 };
 
 /* ================= state ================= */
+/* Where state lives, so the split is a rule rather than a habit:
+     S            — the reading session and everything a profile saves
+     const piper  — the optional neural voice's subsystem, its own object
+     loose let    — a handle on something outside the app: an audio node, a
+                    recognizer, a timer id, the browser's voice list
+   Anything that is session state belongs in S even when it is convenient not
+   to; wasLoud and voiceTries are the two that still sit outside, and both are
+   scratch space for a single loop rather than anything the app reasons about. */
 const S = {
   lines: PRESETS['Meningar'].slice(),
   source: null,     // the text as loaded — hard-word review replaces `lines`, this restores them
@@ -764,7 +772,7 @@ const LANG = {
    sensitive use case. */
 function speak(text, kind='word'){
   const rate = kind==='phrase' ? Math.min(1.8, S.rate * 1.28) : S.rate;
-  if(piperState === 'ready') speakPiper(text, rate);
+  if(piper.state === 'ready') speakPiper(text, rate);
   else                       speakSystem(text, rate);
 }
 
@@ -785,12 +793,11 @@ function speak(text, kind='word'){
    the rest of the session. */
 function beginTurn(text){
   S.speaking = true;
-  micGate(true);
   const myTurn = ++S.speakSeq;
   const release = ()=>{
     if(S.speakSeq !== myTurn) return;
     clearTimeout(S.speakTimer);
-    S.speaking = false; micGate(false);
+    S.speaking = false;
     resetTranscript();
     armHoldoff();
   };
@@ -867,12 +874,18 @@ const PIPER_WASM = {
   piperData: 'https://cdn.jsdelivr.net/npm/@diffusionstudio/piper-wasm@1.0.0/build/piper_phonemize.data'
 };
 
-let piperLib = null;        // the module, imported the first time it is needed
-let piperSession = null;
-let piperFor = null;        // which voice the session was built for
-let piperState = 'off';     // off | busy | ready | failed
-let piperRelease = null;    // the current turn's release, called on 'ended'
-let piperUrl = null;
+/* One object, because three of these encoded a single state between them:
+   state === 'ready' is supposed to mean session and voice are both set, and
+   nothing enforced that while they were separate variables. */
+const piper = {
+  state: 'off',      // off | busy | ready | failed
+  lib: null,         // the module, imported the first time it is needed
+  session: null,
+  voice: null,       // which voice the session was built for
+  release: null,     // the current turn's release, called on 'ended'
+  url: null,         // object URL of the audio being played, revoked on replace
+  unlocked: false    // has the media element been played once from a gesture
+};
 
 /* Playback goes through a media element, not Web Audio. On iPhone the hardware
    mute switch silences Web Audio — it lands in the ambient audio session —
@@ -881,10 +894,10 @@ let piperUrl = null;
 const piperPlayer = new Audio();
 piperPlayer.setAttribute('playsinline', '');
 piperPlayer.preload = 'auto';
-let piperUnlocked = false;
 
-piperPlayer.addEventListener('ended', ()=>{ if(piperRelease) piperRelease(); });
-piperPlayer.addEventListener('error', ()=>{ if(piperRelease) piperRelease(); });
+
+piperPlayer.addEventListener('ended', ()=>{ if(piper.release) piper.release(); });
+piperPlayer.addEventListener('error', ()=>{ if(piper.release) piper.release(); });
 
 /* A tenth of a second of 8-bit silence, built rather than embedded. */
 function silentWav(ms = 100, rate = 8000){
@@ -907,13 +920,13 @@ function silentWav(ms = 100, rate = 8000){
    that the same element may be played programmatically for the rest of the
    page's life. Call this synchronously from a handler, before any await. */
 function piperUnlock(){
-  if(piperUnlocked || !window.URL) return;
+  if(piper.unlocked || !window.URL) return;
   piperPlayer.src = URL.createObjectURL(silentWav());
   piperPlayer.play().then(
-    ()=>{ piperUnlocked = true; },
+    ()=>{ piper.unlocked = true; },
     /* The silence being cut off by the next sound is the intended outcome, and
        the unlock still counted. Anything else means the gesture was gone. */
-    e =>{ if(e && e.name === 'AbortError') piperUnlocked = true; }
+    e =>{ if(e && e.name === 'AbortError') piper.unlocked = true; }
   );
 }
 
@@ -925,15 +938,15 @@ function piperNote(msg){
 }
 
 function piperGiveUp(e){
-  piperState = 'failed';
-  piperSession = null; piperFor = null;
+  piper.state = 'failed';
+  piper.session = null; piper.voice = null;
   piperNote('Den neurala rösten kunde inte startas, så appen använder systemrösten.' +
             (e && e.message ? ' (' + e.message + ')' : ''));
 }
 
 function piperOff(){
-  piperState = 'off';
-  piperSession = null; piperFor = null;
+  piper.state = 'off';
+  piper.session = null; piper.voice = null;
   try{ piperPlayer.pause(); }catch(err){}
   piperNote('');
 }
@@ -954,29 +967,29 @@ const PIPER_CACHE = 'laskompis-models-v1';
 
 async function piperCached(id){
   try{
-    if(!window.caches || !piperLib || !piperLib.PATH_MAP) return false;
-    const path = piperLib.PATH_MAP[id];
+    if(!window.caches || !piper.lib || !piper.lib.PATH_MAP) return false;
+    const path = piper.lib.PATH_MAP[id];
     if(!path) return false;
     const c = await caches.open(PIPER_CACHE);
     // the path may climb out of the base, so normalise the way fetch() would
-    return !!(await c.match(new URL(piperLib.HF_BASE + '/' + path).href));
+    return !!(await c.match(new URL(piper.lib.HF_BASE + '/' + path).href));
   }catch(e){ return false; }
 }
 
 async function piperEnsure(id, allowDownload){
-  if(piperState === 'ready' && piperFor === id) return;
-  if(piperState === 'busy') return;
-  piperState = 'busy';
-  piperSession = null; piperFor = null;
+  if(piper.state === 'ready' && piper.voice === id) return;
+  if(piper.state === 'busy') return;
+  piper.state = 'busy';
+  piper.session = null; piper.voice = null;
   try{
     piperNote('Förbereder rösten …');
-    if(!piperLib){
-      piperLib = await import(PIPER_LIB);
-      registerPiperPaths(piperLib);
+    if(!piper.lib){
+      piper.lib = await import(PIPER_LIB);
+      registerPiperPaths(piper.lib);
     }
     const cached = await piperCached(id);
     if(!cached && !allowDownload){
-      piperState = 'off';
+      piper.state = 'off';
       piperNote('Den neurala rösten är vald men inte nedladdad på den här enheten. ' +
                 'Välj den i listan igen för att hämta den.');
       return;
@@ -990,8 +1003,8 @@ async function piperEnsure(id, allowDownload){
        happens. The discarded session's WebAssembly memory is not reclaimed, as
        the library exposes no way to release it, but switching voice is something
        an adult does in the settings now and then, not something the app does. */
-    if(piperLib.TtsSession) piperLib.TtsSession._instance = null;
-    piperSession = await piperLib.TtsSession.create({
+    if(piper.lib.TtsSession) piper.lib.TtsSession._instance = null;
+    piper.session = await piper.lib.TtsSession.create({
       voiceId: id,
       wasmPaths: PIPER_WASM,
       progress: p =>{
@@ -1000,8 +1013,8 @@ async function piperEnsure(id, allowDownload){
                   ' % av ' + (meta ? meta.mb : '?') + ' MB');
       }
     });
-    piperFor = id;
-    piperState = 'ready';
+    piper.voice = id;
+    piper.state = 'ready';
     piperNote((cached ? 'Neural röst aktiv, redan nedladdad. ' : 'Neural röst aktiv. ') +
               'Den uttalar en del ord fel.');
   }catch(e){
@@ -1014,29 +1027,29 @@ async function piperEnsure(id, allowDownload){
    not retried on its own — picking the voice again is the retry. */
 function piperResume(){
   if(!isPiperKey(S.voiceURI)){
-    if(piperState !== 'off') piperOff();
+    if(piper.state !== 'off') piperOff();
     return;
   }
-  if(piperState !== 'off') return;
+  if(piper.state !== 'off') return;
   piperEnsure(piperIdOf(S.voiceURI), false);
 }
 
 function speakPiper(text, rate){
   /* Captured rather than read later: switching voice clears the global while a
      synthesis may still be in flight. */
-  const session = piperSession;
+  const session = piper.session;
   const release = beginTurn(text);
   const myTurn = S.speakSeq;                  // beginTurn just claimed this one
-  piperRelease = release;
+  piper.release = release;
   try{ piperPlayer.pause(); }catch(err){}
   (async ()=>{
     const blob = await session.predict(text);
-    /* The turn counter, not piperRelease: a newer turn may belong to the system
-       voice, which never touches piperRelease, and this synthesis would then
+    /* The turn counter, not piper.release: a newer turn may belong to the system
+       voice, which never touches piper.release, and this synthesis would then
        have started talking over it. */
     if(S.speakSeq !== myTurn) return;
-    if(piperUrl) URL.revokeObjectURL(piperUrl);
-    piperUrl = URL.createObjectURL(blob);
+    if(piper.url) URL.revokeObjectURL(piper.url);
+    piper.url = URL.createObjectURL(blob);
     /* The model has one fixed tempo, so the rate slider is applied on playback.
        Media elements correct pitch by default, which is exactly what a slower
        reading voice needs.
@@ -1047,7 +1060,7 @@ function speakPiper(text, rate){
        covers a browser that does it the other way round. */
     piperPlayer.preservesPitch = true;
     piperPlayer.defaultPlaybackRate = rate;
-    piperPlayer.src = piperUrl;
+    piperPlayer.src = piper.url;
     piperPlayer.playbackRate = rate;
     await piperPlayer.play();
   })().catch(e =>{
@@ -1064,9 +1077,10 @@ function speakPiper(text, rate){
   });
 }
 
-/* simple half-duplex: ignore recognition while the app is speaking */
-let gated=false;
-function micGate(on){ gated=on; }
+/* Half-duplex: recognition is ignored while the app is speaking. S.speaking is
+   the single source of that truth — it used to be mirrored in a second variable
+   that was set and cleared in the same three places, which is a drift waiting to
+   happen in the one flag that decides whether the app can hear the child. */
 
 /* ================= level meter + voice onset ================= */
 let audioCtx=null, analyser=null, dataArr=null, rafId=null, wasLoud=false;
@@ -1158,7 +1172,7 @@ function tick(){
   $('lvl').style.width = pct+'%';
 
   const loud = rms > 0.022;
-  if(loud && !wasLoud && !gated && S.onsetAt===null){
+  if(loud && !wasLoud && !S.speaking && S.onsetAt===null){
     S.onsetAt = performance.now();   // voice onset
   }
   wasLoud = loud;
@@ -1210,7 +1224,7 @@ function buildRecognizer(){
 
   r.onresult = ev=>{
     S.recSeenAt = performance.now();   // results are the best proof of all
-    if(gated || performance.now() < S.ignoreUntil) return;
+    if(S.speaking || performance.now() < S.ignoreUntil) return;
     let full='';
     for(let i=0;i<ev.results.length;i++) full += ev.results[i][0].transcript+' ';
     $('roHyp').textContent = full.trim().slice(-70) || '—';
@@ -1458,6 +1472,8 @@ function applyText(){
    where they are installed differs per platform; VOICE_HELP holds the
    per-system instructions shown next to this list. */
 let allVoices = [];
+/* The poller's own budget. Reset only where the list is deliberately re-read —
+   see refreshVoices() — never by the callers, who used to each remember to. */
 let voiceTries = 0;
 
 /* Apple ships the same voice in several qualities under one and the same name:
@@ -1496,7 +1512,14 @@ function addPiperGroup(sel){
     g.appendChild(o);
   });
   sel.appendChild(g);
-  sel.onchange = onVoicePicked;
+}
+
+/* An explicit re-read: the adult opened the settings, switched profile, or came
+   back from the system settings having downloaded a voice. Any of those deserves
+   a fresh polling budget; loadVoices() on its own does not. */
+function refreshVoices(){
+  voiceTries = 0;
+  loadVoices();
 }
 
 function loadVoices(){
@@ -1577,8 +1600,6 @@ function loadVoices(){
       ? 'Bara en svensk röst hittad — så här får du fler:'
       : 'Ingen svensk röst hittad — så här installerar du en:';
 
-  sel.onchange = onVoicePicked;
-
   renderVoiceDump();
 }
 
@@ -1592,7 +1613,7 @@ function onVoicePicked(){
     S.voiceURI  = sel.value;
     remember();
     /* Picked deliberately, here, now — the one place a download may start. */
-    piperEnsure(id, true).then(()=>{ if(piperState === 'ready') testVoice(); });
+    piperEnsure(id, true).then(()=>{ if(piper.state === 'ready') testVoice(); });
     return;
   }
   piperOff();
@@ -1891,7 +1912,7 @@ function applyProfile(p){
   S.voiceName = st.voice;
   S.voiceURI  = st.voiceURI || null;
   S.voice = null;
-  if(window.speechSynthesis){ voiceTries = 0; loadVoices(); }
+  if(window.speechSynthesis) refreshVoices();
   piperResume();
 
   S.reviewing = false; S.source = null;
@@ -2103,7 +2124,7 @@ function showTab(name){
     p.classList.toggle('active', p.dataset.page===name));
   $('sheetSub').textContent = TAB_SUB[name] || '';
   $('sheet').querySelector('.cardbody').scrollTop = 0;
-  if(name==='voice') loadVoices();
+  if(name==='voice') refreshVoices();
   if(name==='kids'){ renderKids(); buildAvatars(); renderInstall(); }
 }
 
@@ -2154,8 +2175,9 @@ $('resetBtn').onclick = e=>{
   resetRecognition();
   if(S.running) setHint('Nu lyssnar jag igen.');
 };
+$('voice').onchange = onVoicePicked;
 $('testVoiceBtn').onclick = testVoice;
-$('setupBtn').onclick = ()=>{ loadVoices(); $('sheet').classList.add('open'); };
+$('setupBtn').onclick = ()=>{ refreshVoices(); $('sheet').classList.add('open'); };
 $('closeBtn').onclick = ()=>{ applyText(); $('sheet').classList.remove('open'); };
 $('sheet').onclick = e=>{ if(e.target===$('sheet')){ applyText(); $('sheet').classList.remove('open'); } };
 
@@ -2268,7 +2290,6 @@ const goAway = ()=>{
   S.speakSeq++;
   clearTimeout(S.speakTimer);
   S.speaking = false;
-  micGate(false);
   flush();
 };
 window.addEventListener('pagehide', goAway);
@@ -2277,7 +2298,7 @@ document.addEventListener('visibilitychange', ()=>{
   /* Back in the foreground: the usual reason for leaving is a trip to the
      system settings to download a voice, and Safari only reveals it to the page
      once the list is re-read. */
-  if(window.speechSynthesis){ voiceTries = 0; loadVoices(); }
+  if(window.speechSynthesis) refreshVoices();
 });
 
 $('clockBox').onclick = e=>{ dropFocus(e); resetClock(); };
@@ -2323,9 +2344,8 @@ renderMicNote();
 renderBuild();
 renderInstall();
 initStore();
+/* applyProfile() already reads the voice list and brings back a neural voice the
+   profile asks for, so neither is repeated here — only the subscription that
+   catches Chrome filling the list after the fact. */
 applyProfile(profile());   // sets the text, the position, the settings and the voice
-if(window.speechSynthesis){
-  loadVoices();
-  speechSynthesis.onvoiceschanged = loadVoices;
-}
-piperResume();
+if(window.speechSynthesis) speechSynthesis.onvoiceschanged = loadVoices;
