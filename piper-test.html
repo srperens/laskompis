@@ -4,6 +4,17 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Läskompis · Piper-test</title>
+<!-- The library imports 'onnxruntime-web/wasm' as a bare specifier, which a plain
+     page cannot resolve. An import map points it at the matching version's ESM
+     build, keeping the JavaScript glue and the WebAssembly binary in step. Must
+     come before any module script. -->
+<script type="importmap">
+{
+  "imports": {
+    "onnxruntime-web/wasm": "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/esm/ort.wasm.min.js"
+  }
+}
+</script>
 <style>
 :root{
   --bg:#faf7f2; --card:#fff; --ink:#1c1a17; --faded:#6f6a62;
@@ -74,6 +85,7 @@ snabbt? Röstmodellen är <code>sv_SE-nst-medium</code>, 60 MB, och laddas ner e
 <section>
   <h2>1 · Ladda ner rösten</h2>
   <button class="go" id="dl">Ladda ner (60 MB)</button>
+  <button id="cache">Kontrollera cachen</button>
   <button id="clear">Rensa nedladdat</button>
   <div class="bar"><i id="bar"></i></div>
   <p class="stat" id="dlStat">Inte startad.</p>
@@ -118,15 +130,26 @@ const WORD  = 'fönstret';
 const PHRASE= 'Bra läst!';
 const SENT  = 'Hunden springer efter bollen i gräset, och solen skiner.';
 
-/* onnxruntime-web ships its WebAssembly and its JavaScript glue as one unit and
-   they must be the same version. The library points wasmPaths at 1.18.0 on
-   cdnjs but declares the dependency as ^1.18.0, so esm.sh happily resolved it
-   to 1.29.0 — 1.29 glue against a 1.18 binary, which is what made synthesis
-   blow up inside wasm.mjs. Both halves are pinned here, and both are printed to
-   the log, because this is exactly the kind of mismatch that hides. */
+/* Two separate traps, both about how the library is fetched rather than about
+   Piper itself.
+
+   First: onnxruntime-web ships its WebAssembly and its JavaScript glue as one
+   unit and they must be the same version. The library points wasmPaths at
+   1.18.0 on cdnjs but declares the dependency as ^1.18.0, so a CDN that
+   resolves ranges gave us 1.29.0 — 1.29 glue against a 1.18 binary, which blows
+   up at inference, far from the cause. The import map above pins it.
+
+   Second: the package must come down untouched, so NOT through esm.sh. The
+   phonemizer is an Emscripten build that picks its path by environment —
+   ENVIRONMENT_IS_NODE is `typeof process == "object" && ...process.versions.node`
+   — and esm.sh injects a process shim. Emscripten then believes it is in Node
+   and reads its 18 MB data file with fs.readFile, which esm.sh has stubbed with
+   something that throws: "[unenv] fs.readFile is not implemented yet!". jsDelivr
+   serves the file as published, so there is no process and it takes the browser
+   path. */
 const ORT_VERSION = '1.18.0';
-const LIB_URL = 'https://esm.sh/@mintplex-labs/piper-tts-web@1.0.5' +
-                '?deps=onnxruntime-web@' + ORT_VERSION;
+const LIB_URL = 'https://cdn.jsdelivr.net/npm/@mintplex-labs/piper-tts-web@1.0.5' +
+                '/dist/piper-tts-web.js';
 const WASM_PATHS = {
   onnxWasm:  'https://cdnjs.cloudflare.com/ajax/libs/onnxruntime-web/' + ORT_VERSION + '/',
   piperWasm: 'https://cdn.jsdelivr.net/npm/@diffusionstudio/piper-wasm@1.0.0/build/piper_phonemize.wasm',
@@ -166,7 +189,7 @@ window.addEventListener('error', e =>
 window.addEventListener('unhandledrejection', e =>
   err('UNHANDLED ' + (e.reason && (e.reason.stack || e.reason.message) || e.reason)));
 
-const fmtMB = b => (b/1048576).toFixed(1) + ' MB';
+const fmtMB = b => b < 1048576 ? Math.round(b/1024) + ' kB' : (b/1048576).toFixed(1) + ' MB';
 const fmtMs = ms => ms < 1000 ? Math.round(ms) + ' ms' : (ms/1000).toFixed(2) + ' s';
 
 /* ---------- environment ---------- */
@@ -224,12 +247,15 @@ async function play(blob){
 /* ---------- library ---------- */
 let tts = null, session = null;
 
-const buttons = ['dl','clear','build','word','phrase','sentence','ramp','ownGo'];
+const buttons = ['dl','cache','clear','build','word','phrase','sentence','ramp','ownGo'];
 const setBusy = on => buttons.forEach(b => { $(b).disabled = on; });
 
 try{
   log('Importerar ' + LIB_URL);
   log('  ONNX-runtime pinnad till ' + ORT_VERSION + ', WASM från ' + WASM_PATHS.onnxWasm);
+  /* If this ever says "finns", the phonemizer will take the Node path and fail
+     on fs.readFile — that is the esm.sh trap described above. */
+  log('  process-shim: ' + (typeof process === 'undefined' ? 'saknas (rätt)' : 'FINNS — phonemizern kommer tro att den kör i Node'));
   tts = await import(LIB_URL);
   ok('Biblioteket laddat. Exporter: ' + Object.keys(tts).join(', '));
 }catch(e){
@@ -268,15 +294,44 @@ $('dl').onclick = async ()=>{
     const secs = (performance.now()-started)/1000;
     ok('Nedladdad på ' + secs.toFixed(1) + ' s.');
     $('bar').style.width = '100%';
-    $('dlStat').textContent = 'Klar på ' + secs.toFixed(1) + ' s.';
-    if(navigator.storage && navigator.storage.estimate){
-      const q = await navigator.storage.estimate();
-      log('Lagring använd efteråt: ' + fmtMB(q.usage||0));
-    }
+    log('Kontrollerar att den faktiskt hamnade i cachen …');
+    const state = await checkCache();
+    $('dlStat').textContent = 'Klar på ' + secs.toFixed(1) + ' s.  ·  ' + state;
   }catch(e){
     err('Nedladdningen misslyckades: ' + (e.stack || e.message));
     $('dlStat').textContent = 'Misslyckades — se loggen.';
   }finally{ setBusy(false); }
+};
+
+/* The whole feature stands or falls on this: if the 60 MB does not stick, every
+   start pays for it again and a downloaded voice is not a voice you own. */
+async function checkCache(){
+  const out = [];
+  try{
+    const have = await tts.stored();
+    out.push('OPFS innehåller: ' + (have.length ? have.join(', ') : 'inget'));
+  }catch(e){ out.push('stored() gav fel: ' + (e.name||'') + ' ' + (e.message||e)); }
+  if(navigator.storage && navigator.storage.estimate){
+    try{
+      const q = await navigator.storage.estimate();
+      out.push('Lagring använd: ' + fmtMB(q.usage||0) +
+               (q.quota ? ' av ' + fmtMB(q.quota) : ''));
+    }catch(e){ out.push('estimate() gav fel: ' + e.message); }
+  }
+  if(navigator.storage && navigator.storage.persisted){
+    try{ out.push('Persistent lagring: ' + (await navigator.storage.persisted() ? 'ja' : 'nej')); }
+    catch(e){}
+  }
+  out.forEach(l => log('  ' + l));
+  return out.join('  ·  ');
+}
+
+$('cache').onclick = async ()=>{
+  if(!tts) return;
+  setBusy(true);
+  log('Kontrollerar cachen …');
+  try{ $('dlStat').textContent = await checkCache(); }
+  finally{ setBusy(false); }
 };
 
 $('clear').onclick = async ()=>{
@@ -411,6 +466,11 @@ function sysSay(text, label){
 $('sysWord').onclick     = ()=> sysSay(WORD, 'Ord');
 $('sysSentence').onclick = ()=> sysSay(SENT, 'Mening');
 $('sysOwn').onclick      = ()=> sysSay($('own').value || WORD, 'Egen text');
+
+/* The local Playwright harness reloads the page and asks whether the model
+   survived; module scope is not reachable from there. */
+window.__tts = tts;
+window.__checkCache = () => tts ? checkCache() : 'biblioteket laddades inte';
 
 ok('Klar att testa.');
 </script>
