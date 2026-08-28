@@ -309,6 +309,56 @@ function sim(a,b){
   return 1 - d/L;
 }
 
+/* The recognizer writes spoken numbers as digits: a child reading "tjugo" comes
+   back as "20", and a text that spells its numbers out never matched a word of
+   it. Both spellings are therefore compared by value — see matches().
+
+   Nought to nine hundred and ninety-nine, plus a round thousand, which is past
+   anything a reading exercise holds. Swedish writes the compounds as one word,
+   so tjugoett and trettiofem are entries of their own; the hundreds carry a
+   remainder and are parsed instead of listed. */
+const NUM_ONES  = ['noll','ett','två','tre','fyra','fem','sex','sju','åtta','nio'];
+const NUM_TEENS = ['tio','elva','tolv','tretton','fjorton','femton','sexton',
+                   'sjutton','arton','nitton'];
+const NUM_TENS  = { tjugo:20, trettio:30, fyrtio:40, förtio:40, femtio:50,
+                    sextio:60, sjuttio:70, åttio:80, nittio:90 };
+
+const NUM_WORDS = (()=>{
+  const m = {};
+  NUM_ONES.forEach((w,i)=>{ m[w] = i; });
+  NUM_TEENS.forEach((w,i)=>{ m[w] = 10 + i; });
+  m['en'] = 1;            // the other spelling of one, article or not
+  m['aderton'] = 18;      // the older spelling of eighteen
+  Object.keys(NUM_TENS).forEach(t =>{
+    m[t] = NUM_TENS[t];
+    for(let u = 1; u <= 9; u++) m[t + NUM_ONES[u]] = NUM_TENS[t] + u;
+    m[t + 'en'] = NUM_TENS[t] + 1;
+  });
+  m['hundra'] = 100; m['etthundra'] = 100;
+  m['tusen'] = 1000;  m['ettusen'] = 1000; m['etttusen'] = 1000;
+  for(let h = 2; h <= 9; h++) m[NUM_ONES[h] + 'hundra'] = h * 100;
+  return m;
+})();
+
+const isDigits = t => /^[0-9]+$/.test(t);
+
+function numOf(t){
+  if(isDigits(t)) return parseInt(t, 10);
+  if(NUM_WORDS[t] !== undefined) return NUM_WORDS[t];
+  /* Hundreds carrying a remainder: hundrafemtio, tvåhundratjugoett. */
+  const at = t.indexOf('hundra');
+  if(at >= 0){
+    const head = t.slice(0, at), tail = t.slice(at + 6);
+    const h = head === '' ? 1 : NUM_WORDS[head];
+    if(h !== undefined && h >= 1 && h <= 9){
+      if(tail === '') return h * 100;
+      const rest = NUM_WORDS[tail];
+      if(rest !== undefined && rest < 100) return h * 100 + rest;
+    }
+  }
+  return null;
+}
+
 /* Strictness levels.
    budget = allowed number of character errors, depending on word length
    first  = requires the first letter to match
@@ -326,6 +376,16 @@ const STRICTNESS = {
 function matches(hyp, ref){
   if(!hyp || !ref) return false;
   if(hyp === ref) return true;
+  /* A numeral written in digits is matched by value and nothing else. The
+     spelling tolerance below exists for pronunciation variants, and a numeral has
+     no such gray zone: one character apart is a different number entirely, so on
+     the mild setting "30" was being accepted for "20" and every single digit for
+     every other. Words are left to the tolerance — which is also what keeps "en"
+     and "ett" apart when the text and the child both spell them out. */
+  if(isDigits(hyp) || isDigits(ref)){
+    const hn = numOf(hyp), rn = numOf(ref);
+    return hn !== null && rn !== null && hn === rn;
+  }
   const rule = STRICTNESS[S.strict];
   if(rule.first && ref.length >= 4 && hyp[0] !== ref[0]) return false;
   // large length difference = different word, not a pronunciation variant
@@ -424,7 +484,7 @@ const TARGETS = [
 ];
 
 function elapsedMs(){
-  return S.timeMs + (S.runSince === null ? 0 : Date.now() - S.runSince);
+  return S.timeMs + (S.runSince === null ? 0 : performance.now() - S.runSince);
 }
 
 function fmtClock(ms){
@@ -445,7 +505,14 @@ function renderClock(){
    double-count the same seconds. */
 function bankTime(){
   if(S.runSince === null) return;
-  const run = Date.now() - S.runSince;
+  /* performance.now(), not Date.now(): a monotonic clock cannot jump. The wall
+     clock can — an NTP correction, a timezone change, someone setting the time by
+     hand — and a negative delta used to run the session clock backwards while a
+     large positive one declared the reading time over on the spot.
+
+     Capped anyway. Four hours is not a reading session, it is a tab someone left
+     open, and one of those must not be able to wreck a child's lifetime total. */
+  const run = Math.min(Math.max(0, performance.now() - S.runSince), 4*3600*1000);
   S.timeMs += run;
   S.runSince = null;
   const p = profile();
@@ -482,7 +549,7 @@ function resetClock(){
   bankTime();
   S.timeMs = 0;
   S.targetDone = false;
-  if(S.running) S.runSince = Date.now();
+  if(S.running) S.runSince = performance.now();
   renderClock();
 }
 
@@ -1368,7 +1435,7 @@ async function start(){
     if(p){ p.sessions = (p.sessions||0) + 1; saveSoon(); }
     // a finished stretch is over: this press starts the next one from zero
     if(S.targetDone){ S.timeMs = 0; S.targetDone = false; }
-    S.runSince = Date.now();
+    S.runSince = performance.now();
     startClock();
     try{ rec.start(); }catch(e){}
     $('startBtn').classList.remove('primary');
@@ -2271,7 +2338,7 @@ $('importBtn').onclick = ()=>{
 /* bankTime first: a tab that is killed rather than unloaded would otherwise
    lose the minutes of the stretch that was still running. */
 const flush = ()=>{
-  if(S.running){ bankTime(); S.runSince = Date.now(); }
+  if(S.running){ bankTime(); S.runSince = performance.now(); }
   remember(); saveNow();
 };
 /* Going away must also hand the microphone back — see releaseAudio(). The
