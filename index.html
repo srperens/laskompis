@@ -1444,6 +1444,18 @@ function armHoldoff(){
 }
 
 /* ================= speech ================= */
+/* The reading language, in one place. The app is Swedish only, and that is why
+   the voice list hides every other language: a picker offering seventy English
+   voices for a Swedish reading lesson is noise, not choice. Adding a language
+   later is this object plus a set of texts — not a hunt through the file. The
+   Swedish wording elsewhere is left as it is, since a second language means
+   translating the interface anyway, which is the larger half of that job. */
+const LANG = {
+  tag:    'sv-SE',    // what the recognizer and the utterances are told
+  prefix: 'sv',       // what a voice's own lang must begin with to qualify
+  name:   'Svenska'
+};
+
 /* Two speeds. A single word to be sounded out needs the slow pace;
    encouragement and instructions in between sound sleepy at that tempo
    and therefore run faster. 'word' is the default since it is the
@@ -1491,7 +1503,7 @@ function speakSystem(text, rate){
   // right before speak() can wedge the synthesizer on iOS
   if(speechSynthesis.speaking || speechSynthesis.pending) speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
-  u.lang='sv-SE';
+  u.lang = LANG.tag;
   u.rate = rate;
   /* S.voice always holds a system voice, even while a neural one is chosen —
      that is what makes it the fallback. */
@@ -1855,7 +1867,7 @@ function buildRecognizer(){
     return null;
   }
   const r = new SR();
-  r.lang='sv-SE';
+  r.lang = LANG.tag;
   r.continuous=true;
   r.interimResults=true;
   r.maxAlternatives=1;
@@ -2104,7 +2116,7 @@ function addPiperGroup(sel){
   PIPER.forEach(v =>{
     const o = document.createElement('option');
     o.value = PIPER_KEY + v.id;
-    o.textContent = v.name + '  ·  sv-SE  ·  ' + v.mb + ' MB';
+    o.textContent = v.name + '  ·  ' + LANG.tag + '  ·  ' + v.mb + ' MB';
     g.appendChild(o);
   });
   sel.appendChild(g);
@@ -2132,9 +2144,10 @@ function loadVoices(){
   voiceTries = 0;
 
   const lang = v => (v.lang||'').replace('_','-');
-  const sv    = allVoices.filter(v=> lang(v).toLowerCase().startsWith('sv'))
-                         .sort((a,b)=> qRank(a)-qRank(b) || a.name.localeCompare(b.name,'sv'));
-  const other = allVoices.filter(v=> !lang(v).toLowerCase().startsWith('sv'));
+  const inLang = v => lang(v).toLowerCase().indexOf(LANG.prefix) === 0;
+  const mine  = allVoices.filter(inLang)
+                         .sort((a,b)=> qRank(a)-qRank(b) || a.name.localeCompare(b.name, LANG.prefix));
+  const other = allVoices.filter(v=> !inLang(v));
 
   const wantURI  = S.voiceURI  || (S.voice && voiceKey(S.voice));
   const wantName = S.voiceName || (S.voice && S.voice.name);
@@ -2156,28 +2169,35 @@ function loadVoices(){
     sel.appendChild(g);
   };
 
-  addGroup('Svenska (' + sv.length + ')', sv);
-  addGroup('Övriga språk — nödlösning', other);
+  addGroup(LANG.name + ' (' + mine.length + ')', mine);
+  /* Other languages only when there is nothing in the reading language at all —
+     the emergency the label names, since without any voice the app has nothing
+     to speak with. */
+  if(!mine.length) addGroup('Övriga språk — nödlösning', other);
   addPiperGroup(sel);
 
-  /* Fall back silently when the remembered voice isn't installed here, but keep
+  /* Chosen from what the list actually offers, not from everything installed:
+     picking a voice the picker does not show would leave the control blank.
+
+     Fall back silently when the remembered voice isn't installed here, but keep
      S.voiceName and S.voiceURI untouched: plugging the same profile into a
      device that does have the voice should bring it back. The URI is tried
      first since it is what actually identifies a voice; the name is the
      cross-device fallback, since URIs differ between platforms. */
-  const pick = allVoices.find(v=> voiceKey(v)===wantURI)
-            || allVoices.find(v=> v.name===wantName)
-            || sv[0] || allVoices[0];
+  const shown = mine.length ? mine : other;
+  const pick = shown.find(v=> voiceKey(v)===wantURI)
+            || shown.find(v=> v.name===wantName)
+            || shown[0];
   /* S.voice stays a system voice even while a neural one is chosen — that is
      what makes it the fallback the neural path drops back to. */
   S.voice = pick;
   sel.value = isPiperKey(S.voiceURI) ? S.voiceURI : voiceKey(pick);
 
-  const best = sv.length ? voiceQuality(sv[0]) : '';
-  $('voiceInfo').textContent = sv.length > 1
-    ? sv.length + ' svenska röster hittade' +
-      (best ? ' — bäst är ' + sv[0].name + ' (' + best + ').' : '.')
-    : sv.length === 1
+  const best = mine.length ? voiceQuality(mine[0]) : '';
+  $('voiceInfo').textContent = mine.length > 1
+    ? mine.length + ' svenska röster hittade' +
+      (best ? ' — bäst är ' + mine[0].name + ' (' + best + ').' : '.')
+    : mine.length === 1
       ? 'Bara en svensk röst hittad — så här får du fler:'
       : 'Ingen svensk röst hittad — så här installerar du en:';
 
