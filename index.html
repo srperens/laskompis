@@ -1347,7 +1347,11 @@ function finishLine(){
   const done = profile();
   if(done && !S.reviewing){ done.read = (done.read||0) + 1; saveSoon(); }
   setHint('Bra läst!', true);
-  speak('Bra läst!', 'phrase');
+  /* Spoken only for a finished sentence. During the hard-word review a whole
+     "line" is one single word, and praising each one out loud turns the review
+     into a call-and-response with the app — the pling, for those who have it
+     on, is acknowledgement enough. */
+  if(!S.reviewing) speak('Bra läst!', 'phrase');
   const atLine = S.line, ofLines = S.lines;
   S.finishTimer = setTimeout(()=>{
     S.finishTimer = null;
