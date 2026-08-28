@@ -88,6 +88,9 @@ console.log('\n5. läser vidare efter återhämtningen');
 await page.evaluate(w => window.__sr.say(w, true), words.slice(0,4).join(' '));
 await page.waitForTimeout(600);
 const fin = await st();
-verdict(recovered && fin.instanser > 1 && fin.recLive && fin.pos > 0,
-        `kom tillbaka inom 12 s (${recovered}), byggde om (${fin.instanser} instanser), läste till ord ${fin.pos}`);
+/* How it came back is the app's business — a nudge to the existing recognizer is
+   the better answer and costs no audio session. That it came back, quickly, and
+   that reading continued afterwards is the property worth holding. */
+verdict(recovered && fin.recLive && fin.pos > 0,
+        `kom tillbaka inom 12 s (${recovered}), lever (${fin.recLive}), läste till ord ${fin.pos}`);
 await b.close();

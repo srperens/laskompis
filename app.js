@@ -147,6 +147,10 @@ const S = {
   ignoreUntil: 0,
   recLive: false,
   recSeenAt: 0,     // last sign of life from the recognizer
+  recStarts: 0,     // sessions begun, nudges, and full rebuilds — shown as IGENK
+  recNudges: 0,
+  recRebuilds: 0,
+  saidDeaf: false,  // the home-screen-app warning is said once, not every press
   posSince: 0,
   hypConsumed: 0,
   lastRescue: 0,
@@ -1207,16 +1211,16 @@ async function ensureAudio(){
     if(!micStream){
       /* All three off, deliberately. Asking for echo cancellation, noise
          suppression or gain control makes WebKit open the voice-processing audio
-         unit, and that unit brings the telephone call with it: iOS moves the
-         whole session to the earpiece the instant the microphone is granted, and
-         leaves it there. Everything the app says then sounds like a phone call.
+         unit, and that unit brings the telephone call with it: iOS moves the whole
+         session to the earpiece the instant the microphone is granted, and leaves
+         it there. Everything the app says then sounds like a phone call.
 
-         Turning them off costs nothing here. This stream feeds the level meter
-         and nothing else — speech recognition captures separately, through
-         settings this app cannot reach, so what the recognizer hears is
-         unaffected. And echo cancellation would be redundant anyway: the app is
-         half-duplex, gating the microphone while it speaks and discarding the
-         transcript afterwards. */
+         Turning them off costs nothing here. This stream feeds the level meter and
+         nothing else — speech recognition captures separately, through settings
+         this app cannot reach, so what the recognizer hears is unaffected. And
+         echo cancellation would be redundant anyway: the app is half-duplex,
+         gating the microphone while it speaks and discarding the transcript
+         afterwards. */
       micStream = await navigator.mediaDevices.getUserMedia({audio:{
         echoCancellation:false, noiseSuppression:false, autoGainControl:false
       }});
@@ -1325,8 +1329,10 @@ function buildRecognizer(){
      session is running. */
   const markLive = ()=>{
     S.ignoreUntil = 0;
+    if(!S.recLive) S.recStarts++;
     S.recLive = true;
     S.recSeenAt = performance.now();
+    renderRec();
   };
   /* Every new session has an empty result list, so the token anchor must be
      reset — but only here, where a session genuinely begins. applyAlign clamps
@@ -1406,16 +1412,49 @@ function buildRecognizer(){
    not just the flag: if results are arriving it stays out of the way whatever the
    flags say. */
 let recWatch = null;
+let recNudgedAt = 0, recRebuiltAt = 0;
+
+function renderRec(){
+  const el = $('roRec');
+  if(el) el.textContent = S.recStarts + '/' + S.recNudges + '/' + S.recRebuilds;
+}
 
 function watchRecognition(){
   clearInterval(recWatch);
-  S.recSeenAt = performance.now();
+  S.recSeenAt = recNudgedAt = recRebuiltAt = performance.now();
   recWatch = setInterval(()=>{
     if(!S.running || S.speaking) return;   // muted on purpose while the app talks
+    /* The whole supervisor rests on being told when a session begins, and a
+       browser that never says so would look permanently dead to it — leaving it
+       to nudge and rebuild for ever, renegotiating the audio session every time.
+       That is not a hypothetical: it is what broke listening on iOS while macOS
+       was fine. So the signal is only trusted once it has been seen to work at
+       least once. Where it never arrives, the app is left alone; the help timer
+       still heals a wedged recognizer, just more slowly. */
+    if(!S.recStarts) return;
     const now = performance.now();
     if(S.recLive){ S.recSeenAt = now; return; }
-    if(now - S.recSeenAt < 5000) return;
+    if(now - S.recSeenAt < 8000) return;
+
+    /* Two steps, and the order matters more than it looks. Rebuilding the
+       recognizer starts a new capture, and on iOS a new capture renegotiates the
+       whole audio session — so a supervisor that reached for the teardown every
+       few seconds would flip the audio profile back and forth and leave the app
+       unable to speak at all. Which is exactly what it did.
+
+       So: nudge the existing instance first, which costs nothing, and tear down
+       only if that has not helped either. And at most once a minute, because a
+       recognizer that cannot be revived will not be revived by trying harder. */
+    if(now - recNudgedAt > 8000 && rec){
+      recNudgedAt = now;
+      S.recNudges++; renderRec();
+      try{ rec.start(); }catch(e){}
+      return;
+    }
+    if(now - recRebuiltAt < 60000) return;
+    recNudgedAt = recRebuiltAt = now;
     S.recSeenAt = now;
+    S.recRebuilds++; renderRec();
     resetRecognition();
   }, 2500);
 }
@@ -1455,6 +1494,26 @@ function resetRecognition(){
   armHoldoff();
 }
 
+/* iOS does not reliably hand a home-screen web app the speech recogniser. In
+   Safari it works; installed on the home screen it often works once and then
+   stops until the phone is restarted — a WebKit limitation, reported for years.
+   Nothing is raised when it happens: no error, no events, just silence. So the
+   silence is the signal. Saying so is the whole fix available to us; a parent
+   staring at an app that has stopped hearing their child deserves better than a
+   mystery. */
+let recDeafTimer = null;
+
+function watchForMuteness(){
+  clearTimeout(recDeafTimer);
+  if(S.saidDeaf || detectOS() !== 'ios' || !isInstalled()) return;
+  recDeafTimer = setTimeout(()=>{
+    if(!S.running || S.recStarts || S.recLive) return;   // it did start after all
+    S.saidDeaf = true;
+    setHint('Appen hör inget här. iPhone ger inte hemskärmsappen taligenkänning ' +
+            '— öppna läskompis i Safari i stället.', true);
+  }, 7000);
+}
+
 /* ================= start / stop ================= */
 async function start(){
   /* S.running is only set once the microphone is granted, so without this
@@ -1477,6 +1536,7 @@ async function start(){
     S.running=true;
     S.lats=[];
     watchRecognition();
+    watchForMuteness();
     const p = profile();
     if(p){ p.sessions = (p.sessions||0) + 1; saveSoon(); }
     // a finished stretch is over: this press starts the next one from zero
@@ -1497,6 +1557,7 @@ async function start(){
 function stop(){
   S.running=false;
   unwatchRecognition();
+  clearTimeout(recDeafTimer);
   bankTime();      // before remember(), so the profile total includes this stretch
   stopClock();
   remember();
@@ -1884,8 +1945,24 @@ function renderMicNote(){
 function renderBuild(){
   const raw = document.lastModified;
   const d = new Date(raw);
-  $('build').textContent = 'Version ' +
-    (isFinite(d) ? d.toLocaleString('sv-SE', {dateStyle:'short', timeStyle:'short'}) : raw);
+  const stamp = isFinite(d) ? d.toLocaleString('sv-SE', {dateStyle:'short', timeStyle:'short'}) : raw;
+  $('build').textContent = 'Version ' + stamp;
+
+  /* The stamp reads the page's own Last-Modified, so a stale app.js behind a
+     fresh index.html would look perfectly current — and that is exactly the
+     shape of a caching problem worth knowing about. Ask the server what it
+     thinks app.js's date is, bypassing every cache, and say so when the two
+     disagree. Best-effort: offline this simply fails and the stamp stands. */
+  fetch('./app.js', { method:'HEAD', cache:'no-store' }).then(res =>{
+    const lm = res && res.headers.get('last-modified');
+    if(!lm) return;
+    const code = new Date(lm), page = new Date(raw);
+    if(!isFinite(code) || !isFinite(page)) return;
+    if(Math.abs(code - page) < 90000) return;         // same deploy, near enough
+    $('build').textContent = 'Version ' + stamp + ' · koden är från ' +
+      code.toLocaleString('sv-SE', {dateStyle:'short', timeStyle:'short'}) +
+      ' — ladda om';
+  }).catch(()=>{});
 }
 
 /* ================= profiles + local storage ================= */
@@ -2154,7 +2231,10 @@ function renderInstall(){
   if(!el) return;
 
   if(isInstalled()){
-    el.innerHTML = '<p>Appen är sparad på enheten. Den startar direkt, tar hela skärmen — och den sparade progressen ligger kvar även efter en läspaus.</p>';
+    el.innerHTML = '<p>Appen är sparad på enheten. Den startar direkt, tar hela skärmen — och den sparade progressen ligger kvar även efter en läspaus.</p>' +
+      (detectOS()==='ios'
+        ? '<p><b>Men lyssningen fungerar inte här.</b> iPhone ger inte hemskärmsappen taligenkänning — den brukar fungera första gången och sedan tystna. Öppna läskompis i Safari när barnet ska läsa. Det är Apples begränsning, inget vi kan koda bort.</p>'
+        : '');
     return;
   }
 
@@ -2173,7 +2253,8 @@ function renderInstall(){
   }
 
   el.innerHTML = detectOS()==='ios'
-    ? '<p>Tryck på <b>Dela</b>-ikonen och välj <b>Lägg till på hemskärmen</b>. På iPhone är det också det enda som skyddar den sparade progressen — Safari rensar annars lagringen efter ungefär en veckas inaktivitet.</p>'
+    ? '<p>Tryck på <b>Dela</b>-ikonen och välj <b>Lägg till på hemskärmen</b>. Det skyddar den sparade progressen, som Safari annars rensar efter ungefär en veckas inaktivitet.</p>' +
+      '<p><b>Läs ändå i Safari.</b> iPhone ger inte hemskärmsappen taligenkänning, så appen hör ingenting där. Ha den sparad för progressens skull, och öppna Safari när barnet ska läsa — eller ta en säkerhetskopia nedan i stället.</p>'
     : '<p>Spara appen via webbläsarens meny — <b>Installera app</b> eller <b>Lägg till på hemskärmen</b>. Då startar den direkt och progressen ligger kvar.</p>';
 }
 
