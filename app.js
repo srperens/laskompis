@@ -151,6 +151,9 @@ const S = {
   recNudges: 0,
   recRebuilds: 0,
   saidDeaf: false,  // the home-screen-app warning is said once, not every press
+  /* Off on iPhone, where capturing costs the loudspeaker; on elsewhere, where it
+     costs nothing and shows the child that the app is hearing them. */
+  meter: true,
   posSince: 0,
   hypConsumed: 0,
   lastRescue: 0,
@@ -1206,7 +1209,21 @@ let micStream=null, micSrc=null;
 /* The AudioContext is built once and lives for the whole page. Only the stream
    and the source node come and go — see releaseAudio() for why the context
    itself must never be closed. */
+/* The level meter is the only thing the getUserMedia stream is for. Speech
+   recognition captures on its own, through settings this app cannot reach, so
+   turning the meter off costs no listening at all.
+
+   On iPhone that trade is worth making by default. Any active capture puts
+   Safari's audio session into record mode, and a web page cannot ask for
+   defaultToSpeaker — so the moment the microphone is granted, everything the app
+   says moves to the earpiece and stays there, mid-sentence if that is where the
+   grant lands. Constraints do not change it; only not capturing does. A bar that
+   twitches is worth less than words a child can hear. */
 async function ensureAudio(){
+  if(!S.meter){
+    if(micStream) releaseMeter();
+    return true;                 // nothing to set up, and nothing to fail
+  }
   try{
     if(!micStream){
       /* All three off, deliberately. Asking for echo cancellation, noise
@@ -1280,7 +1297,21 @@ function releaseAudio(){
   $('lvl').style.width = '0%';
 }
 
+/* Only the meter's own graph, leaving the recognizer and any neural playback
+   alone — used when the meter is switched off mid-session. */
+function releaseMeter(){
+  if(rafId){ cancelAnimationFrame(rafId); rafId = null; }
+  if(micSrc){ try{ micSrc.disconnect(); }catch(e){} micSrc = null; }
+  if(micStream){
+    micStream.getTracks().forEach(t=>{ try{ t.stop(); }catch(e){} });
+    micStream = null;
+  }
+  wasLoud = false; S.onsetAt = null;
+  $('lvl').style.width = '0%';
+}
+
 function tick(){
+  if(!analyser || !dataArr){ rafId = null; return; }
   analyser.getByteTimeDomainData(dataArr);
   let sum=0;
   for(let i=0;i<dataArr.length;i++){ const v=(dataArr[i]-128)/128; sum+=v*v; }
@@ -1923,13 +1954,13 @@ function renderVoiceHelp(){
     .join('');
 }
 
-/* The app hands the microphone back the moment it goes into the background, so
-   the permission is asked for again on the way in. On iOS that is the norm
-   anyway — Safari forgets the grant between page loads unless the site is set
-   to Tillåt by hand — so the way out of the prompt is worth spelling out. */
+/* On iPhone the meter is off by default, and the note says why rather than
+   leaving a missing bar to look like a fault. Elsewhere it explains that the
+   microphone is handed back on backgrounding, which is why the permission is
+   asked for again on the way in. */
 const MIC_NOTE = {
-  ios: 'Appen släpper mikrofonen så fort du växlar bort från den, så iOS frågar om lov igen. Slipp frågan: <b>aA</b> i adressfältet › <b>Inställningar för webbplats</b> › <b>Mikrofon</b> › <b>Tillåt</b>.',
-  other: 'Appen släpper mikrofonen så fort du växlar bort från den, och ber om den igen när du trycker på play.'
+  ios: 'Nivåmätaren är av här, och det är med flit: så fort en webbsida spelar in lägger iOS om ljudet till lilla högtalaren, och en webbsida får inte begära den stora. Taligenkänningen spelar in för sig och påverkas inte — barnet hörs precis lika bra, du ser bara ingen stapel. Slår du på den flyttar ljudet.',
+  other: 'Mätaren visar att appen hör något. Den släpps så fort du växlar bort från appen, och begärs igen när du trycker på play.'
 };
 
 function renderMicNote(){
@@ -1965,6 +1996,9 @@ function renderBuild(){
   }).catch(()=>{});
 }
 
+/* iPhone pays for the meter with the loudspeaker; nothing else does. */
+function defaultMeter(){ return detectOS() !== 'ios'; }
+
 /* ================= profiles + local storage ================= */
 /* Everything the app remembers lives in one localStorage key on this device.
    No account, no backend, nothing leaves the browser — which also means the
@@ -1995,7 +2029,8 @@ function newProfile(name, avatar){
     hard: {},
     settings: {
       size:52, holdoff:8000, strict:'normal', target:0,
-      rate:0.8, voice:null, voiceURI:null, sndOk:false, sndFail:false, vol:0.85
+      rate:0.8, voice:null, voiceURI:null, sndOk:false, sndFail:false, vol:0.85,
+      meter: defaultMeter()
     }
   };
 }
@@ -2039,7 +2074,8 @@ function sanitize(raw){
       voiceURI: typeof st.voiceURI === 'string' ? st.voiceURI.slice(0,160) : null,
       sndOk:   !!st.sndOk,
       sndFail: !!st.sndFail,
-      vol:     clampNum(st.vol, 0, 1, 0.85)
+      vol:     clampNum(st.vol, 0, 1, 0.85),
+      meter:   typeof st.meter === 'boolean' ? st.meter : defaultMeter()
     };
     return o;
   }).filter(Boolean).slice(0, MAX_KIDS);
@@ -2081,7 +2117,8 @@ function remember(){
   const p = profile(); if(!p) return;
   p.settings = {
     size:S.size, holdoff:S.holdoff, strict:S.strict, target:S.target, rate:S.rate,
-    voice:S.voiceName, voiceURI:S.voiceURI, sndOk:S.sndOk, sndFail:S.sndFail, vol:S.vol
+    voice:S.voiceName, voiceURI:S.voiceURI, sndOk:S.sndOk, sndFail:S.sndFail,
+    vol:S.vol, meter:S.meter
   };
   /* During the hard-word review S.lines holds the review words, not the text —
      saving then would replace the child's reading text with six loose words. */
@@ -2094,6 +2131,7 @@ function applyProfile(p){
   const st = p.settings;
   setSize(st.size); setHold(st.holdoff); setRate(st.rate); setVol(st.vol);
   setStrict(st.strict); setSndOk(st.sndOk); setSndFail(st.sndFail);
+  setMeter(st.meter);
   setTarget(st.target || 0);
   /* The clock measures one child's stretch, so it starts over on a swap —
      the lifetime total lives on the profile and is shown in the Barn tab. */
@@ -2353,8 +2391,15 @@ function setVol(v){
 }
 function setStrict(v){ S.strict = v; $('strict').value = v; }
 function setSndOk(v){ S.sndOk = v; $('cbOk').checked = v; }
+function setMeter(v){
+  S.meter = v;
+  $('cbMeter').checked = v;
+  if(!v) releaseMeter();
+  else if(S.running) ensureAudio();
+}
 function setSndFail(v){ S.sndFail = v; $('cbFail').checked = v; }
 
+$('cbMeter').onchange = e=>{ setMeter(e.target.checked); remember(); };
 $('cbOk').onchange   = e=>{ setSndOk(e.target.checked); if(S.sndOk) playOk(); remember(); };
 $('cbFail').onchange = e=>{ setSndFail(e.target.checked); if(S.sndFail) playFail(); remember(); };
 $('rVol').oninput = e=>{ setVol(+e.target.value/100); remember(); };
