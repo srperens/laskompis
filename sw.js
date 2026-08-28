@@ -9,6 +9,9 @@
 
    Bump CACHE when the shell changes. */
 const CACHE = 'laskompis-v1';
+/* The scope root, so a navigation can be told from any other page served from
+   the same origin — the cached shell must only ever be the app itself. */
+const ROOT = new URL('./', self.location).pathname;
 const FONTS = 'laskompis-fonts-v1';
 const SHELL = [
   './', './index.html', './manifest.webmanifest',
@@ -74,10 +77,14 @@ self.addEventListener('fetch', e=>{
      second attempt without it, in case a browser rejects re-initialising a
      navigation request. */
   if(req.mode === 'navigate'){
+    /* Only the app itself is the shell. Any other page on this origin — a test
+       page, a scratch page — is served but never stored, since storing it under
+       './index.html' would replace the app's offline copy with it. */
+    const isShell = url.pathname === ROOT || url.pathname === ROOT + 'index.html';
     e.respondWith((async ()=>{
       const fromNetwork = async init =>{
         const res = await fetch(req, init);
-        if(res && res.ok){
+        if(res && res.ok && isShell){
           const c = await caches.open(CACHE);
           c.put('./index.html', res.clone());
         }
@@ -85,6 +92,7 @@ self.addEventListener('fetch', e=>{
       };
       try{ return await fromNetwork({cache:'no-cache'}); }catch(err){}
       try{ return await fromNetwork(); }catch(err){}
+      if(!isShell) return Response.error();   // no stored copy to fall back on
       const c = await caches.open(CACHE);
       return (await c.match('./index.html')) || (await c.match('./')) || Response.error();
     })());

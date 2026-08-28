@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Läskompis · Piper-test</title>
+<style>
+:root{
+  --bg:#faf7f2; --card:#fff; --ink:#1c1a17; --faded:#6f6a62;
+  --rule:#e6e0d6; --good:#1f7a4d; --bad:#a4302a; --accent:#2f5d8a;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --bg:#171614; --card:#201e1b; --ink:#f2efe9; --faded:#a09a91;
+    --rule:#332f2a; --good:#5fc38d; --bad:#e8837c; --accent:#8ab4e0;
+  }
+}
+*{box-sizing:border-box}
+body{
+  margin:0;padding:18px 16px 60px;background:var(--bg);color:var(--ink);
+  font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  -webkit-text-size-adjust:100%;
+}
+.wrap{max-width:640px;margin:0 auto}
+h1{font-size:19px;margin:0 0 4px}
+.sub{color:var(--faded);font-size:13px;margin:0 0 18px}
+section{
+  background:var(--card);border:1px solid var(--rule);border-radius:12px;
+  padding:14px 15px;margin-bottom:14px;
+}
+h2{font-size:12px;text-transform:uppercase;letter-spacing:.07em;color:var(--faded);margin:0 0 10px;font-weight:600}
+button{
+  font:inherit;font-weight:600;color:var(--ink);background:var(--card);
+  border:1px solid var(--rule);border-radius:9px;padding:11px 15px;
+  cursor:pointer;margin:0 6px 6px 0;min-height:44px;
+}
+button.go{background:var(--accent);border-color:var(--accent);color:#fff}
+button:disabled{opacity:.45;cursor:default}
+input[type=text]{
+  font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--rule);
+  border-radius:9px;padding:11px 12px;width:100%;margin-bottom:8px;
+}
+dl{margin:0;font-size:13px}
+dl div{display:flex;gap:10px;padding:3px 0;border-bottom:1px solid var(--rule)}
+dl div:last-child{border-bottom:0}
+dt{color:var(--faded);flex:0 0 42%}
+dd{margin:0;flex:1;min-width:0;word-break:break-word;font-variant-numeric:tabular-nums}
+.bar{height:8px;background:var(--rule);border-radius:99px;overflow:hidden;margin:10px 0 6px}
+.bar i{display:block;height:100%;width:0;background:var(--accent);transition:width .15s}
+.stat{font-size:13px;color:var(--faded);font-variant-numeric:tabular-nums}
+#log{
+  font:11.5px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;
+  white-space:pre-wrap;word-break:break-word;color:var(--faded);
+  max-height:340px;overflow:auto;margin:0;
+}
+#log b{color:var(--ink);font-weight:600}
+#log .e{color:var(--bad)}
+#log .k{color:var(--good)}
+.note{font-size:12.5px;color:var(--faded);margin:10px 0 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Piper-test</h1>
+<p class="sub">Går en neural svensk röst att köra lokalt i den här webbläsaren, och hur
+snabbt? Röstmodellen är <code>sv_SE-nst-medium</code>, 60 MB, och laddas ner en gång.</p>
+
+<section>
+  <h2>Miljö</h2>
+  <dl id="env"></dl>
+</section>
+
+<section>
+  <h2>1 · Ladda ner rösten</h2>
+  <button class="go" id="dl">Ladda ner (60 MB)</button>
+  <button id="clear">Rensa nedladdat</button>
+  <div class="bar"><i id="bar"></i></div>
+  <p class="stat" id="dlStat">Inte startad.</p>
+  <p class="note">Ovanpå modellen hämtas espeak-data (18 MB) och ONNX-runtime (11 MB)
+  vid första uppläsningen. Cachas i Origin Private File System respektive HTTP-cachen.</p>
+</section>
+
+<section>
+  <h2>2 · Läs upp</h2>
+  <button class="go" id="word">Ett ord</button>
+  <button class="go" id="sentence">En mening</button>
+  <input type="text" id="own" placeholder="Egen text" value="Katten satt på mattan.">
+  <button id="ownGo">Läs upp egen text</button>
+  <p class="stat" id="synStat">Inte startad.</p>
+</section>
+
+<section>
+  <h2>3 · Jämför med systemrösten</h2>
+  <button id="sysWord">Ett ord</button>
+  <button id="sysSentence">En mening</button>
+  <button id="sysOwn">Egen text</button>
+  <p class="stat" id="sysStat">Samma texter genom <code>speechSynthesis</code>, i 0,8 hastighet
+  som appen kör.</p>
+</section>
+
+<section>
+  <h2>Logg</h2>
+  <pre id="log"></pre>
+</section>
+
+</div>
+
+<script type="module">
+const VOICE = 'sv_SE-nst-medium';
+const WORD  = 'fönstret';
+const SENT  = 'Hunden springer efter bollen i gräset, och solen skiner.';
+
+const $ = id => document.getElementById(id);
+const t0 = performance.now();
+
+/* ---------- log ---------- */
+function log(msg, cls){
+  const at = ((performance.now()-t0)/1000).toFixed(2).padStart(6);
+  const line = document.createElement('span');
+  if(cls) line.className = cls;
+  line.textContent = at + 's  ' + msg + '\n';
+  $('log').appendChild(line);
+  $('log').scrollTop = $('log').scrollHeight;
+}
+const ok  = m => log(m, 'k');
+const err = m => log(m, 'e');
+
+/* A phone has no console worth reaching, so nothing may fail silently. */
+window.addEventListener('error', e =>
+  err('ERROR ' + (e.message||e.error) + (e.filename ? '  @ '+e.filename+':'+e.lineno : '')));
+window.addEventListener('unhandledrejection', e =>
+  err('UNHANDLED ' + (e.reason && (e.reason.stack || e.reason.message) || e.reason)));
+
+const fmtMB = b => (b/1048576).toFixed(1) + ' MB';
+const fmtMs = ms => ms < 1000 ? Math.round(ms) + ' ms' : (ms/1000).toFixed(2) + ' s';
+
+/* ---------- environment ---------- */
+async function renderEnv(){
+  const rows = {
+    'Webbläsare': navigator.userAgent,
+    'Fristående app': (matchMedia('(display-mode: standalone)').matches ||
+                       navigator.standalone === true) ? 'ja' : 'nej (i webbläsaren)',
+    'Kärnor': navigator.hardwareConcurrency || 'okänt',
+    'Enhetsminne': navigator.deviceMemory ? navigator.deviceMemory + ' GB' : 'okänt (Safari döljer det)',
+    'crossOriginIsolated': String(self.crossOriginIsolated),
+    'SharedArrayBuffer': typeof SharedArrayBuffer !== 'undefined' ? 'finns' : 'saknas — WASM körs enkeltrådat',
+    'WebAssembly': typeof WebAssembly !== 'undefined' ? 'finns' : 'SAKNAS',
+    'OPFS': (navigator.storage && navigator.storage.getDirectory) ? 'stöds' : 'SAKNAS'
+  };
+  if(navigator.storage && navigator.storage.estimate){
+    try{
+      const q = await navigator.storage.estimate();
+      rows['Lagring använd'] = fmtMB(q.usage || 0);
+      rows['Lagringskvot'] = q.quota ? fmtMB(q.quota) : 'okänt';
+    }catch(e){ rows['Lagring'] = 'estimate() gav fel: ' + e.message; }
+  }
+  const dl = $('env');
+  for(const [k,v] of Object.entries(rows)){
+    const d = document.createElement('div');
+    d.innerHTML = '<dt></dt><dd></dd>';
+    d.querySelector('dt').textContent = k;
+    d.querySelector('dd').textContent = v;
+    dl.appendChild(d);
+  }
+  log('Miljö: ' + (self.crossOriginIsolated ? 'crossOriginIsolated' : 'INTE crossOriginIsolated') +
+      ', SharedArrayBuffer ' + (typeof SharedArrayBuffer !== 'undefined' ? 'finns' : 'saknas'));
+}
+
+/* ---------- audio ---------- */
+/* iOS only lets an AudioContext start from inside a user gesture, and every
+   button here calls this synchronously before awaiting anything. Playing the
+   result through Web Audio rather than an <audio> element matters: the blob is
+   only ready after several awaits, by which time the gesture is long gone and
+   audio.play() would be refused. */
+let ctx = null;
+function unlock(){
+  if(!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+  if(ctx.state === 'suspended') ctx.resume();
+}
+async function play(blob){
+  const buf = await ctx.decodeAudioData(await blob.arrayBuffer());
+  const src = ctx.createBufferSource();
+  src.buffer = buf;
+  src.connect(ctx.destination);
+  src.start();
+  return buf.duration;
+}
+
+/* ---------- library ---------- */
+let tts = null, session = null;
+
+const buttons = ['dl','clear','word','sentence','ownGo'];
+const setBusy = on => buttons.forEach(b => { $(b).disabled = on; });
+
+try{
+  log('Importerar piper-tts-web från esm.sh …');
+  tts = await import('https://esm.sh/@mintplex-labs/piper-tts-web@1.0.5');
+  ok('Biblioteket laddat. Exporter: ' + Object.keys(tts).join(', '));
+}catch(e){
+  err('Kunde inte ladda biblioteket: ' + (e.stack || e.message));
+}
+
+await renderEnv();
+
+if(tts){
+  try{
+    const have = await tts.stored();
+    log('Redan nedladdat: ' + (have.length ? have.join(', ') : 'inget'));
+    if(have.includes(VOICE)) $('dlStat').textContent = 'Rösten finns redan nedladdad.';
+  }catch(e){ err('stored() gav fel: ' + e.message); }
+}
+
+/* ---------- 1. download ---------- */
+$('dl').onclick = async ()=>{
+  if(!tts) return;
+  setBusy(true);
+  const started = performance.now();
+  let last = 0;
+  try{
+    log('Laddar ner ' + VOICE + ' …');
+    await tts.download(VOICE, p =>{
+      const pct = p.total ? p.loaded / p.total : 0;
+      $('bar').style.width = (pct*100).toFixed(1) + '%';
+      const secs = (performance.now()-started)/1000;
+      $('dlStat').textContent =
+        fmtMB(p.loaded) + ' av ' + fmtMB(p.total) + '  ·  ' +
+        (pct*100).toFixed(0) + '%  ·  ' + secs.toFixed(1) + ' s  ·  ' +
+        (p.loaded/1048576/Math.max(secs,0.001)).toFixed(1) + ' MB/s';
+      // one log line per 10 %, so the log stays readable
+      if(pct - last >= 0.1){ last = pct; log('  ' + (pct*100).toFixed(0) + '%  ' + p.url); }
+    });
+    const secs = (performance.now()-started)/1000;
+    ok('Nedladdad på ' + secs.toFixed(1) + ' s.');
+    $('bar').style.width = '100%';
+    $('dlStat').textContent = 'Klar på ' + secs.toFixed(1) + ' s.';
+    if(navigator.storage && navigator.storage.estimate){
+      const q = await navigator.storage.estimate();
+      log('Lagring använd efteråt: ' + fmtMB(q.usage||0));
+    }
+  }catch(e){
+    err('Nedladdningen misslyckades: ' + (e.stack || e.message));
+    $('dlStat').textContent = 'Misslyckades — se loggen.';
+  }finally{ setBusy(false); }
+};
+
+$('clear').onclick = async ()=>{
+  if(!tts) return;
+  setBusy(true);
+  try{
+    await tts.flush();
+    ok('Rensat. Nästa uppläsning laddar ner igen.');
+    session = null;
+    $('bar').style.width = '0';
+    $('dlStat').textContent = 'Rensat.';
+  }catch(e){ err('flush() gav fel: ' + (e.stack || e.message)); }
+  finally{ setBusy(false); }
+};
+
+/* ---------- 2. synthesis ---------- */
+/* The session is built once and reused. Its creation is what pulls in the ONNX
+   runtime, the phonemizer and the espeak data, so it is timed separately — in
+   the app that cost would land on the first word a child reads. */
+async function ensureSession(){
+  if(session) return session;
+  const started = performance.now();
+  log('Bygger TtsSession (hämtar ONNX-runtime, phonemizer och espeak-data) …');
+  session = await tts.TtsSession.create({
+    voiceId: VOICE,
+    logger: m => log('  piper: ' + m),
+    progress: p =>{
+      const pct = p.total ? (p.loaded/p.total*100).toFixed(0) : '?';
+      $('synStat').textContent = 'Hämtar ' + p.url.split('/').pop() + ' … ' + pct + '%';
+    }
+  });
+  ok('Session klar på ' + fmtMs(performance.now()-started) + '.');
+  return session;
+}
+
+async function say(text, label){
+  if(!tts) return;
+  unlock();                       // must happen inside the gesture
+  setBusy(true);
+  try{
+    const s = await ensureSession();
+    const started = performance.now();
+    const blob = await s.predict(text);
+    const synth = performance.now() - started;
+    const dur = await play(blob);
+    const ratio = (dur*1000)/synth;
+    ok(label + ': syntetiserade ' + fmtMs(synth) + ' för ' + dur.toFixed(2) +
+       ' s ljud (' + ratio.toFixed(1) + '× realtid), ' + fmtMB(blob.size) + ' wav.');
+    $('synStat').textContent =
+      label + ' · ' + fmtMs(synth) + ' för ' + dur.toFixed(2) + ' s ljud · ' +
+      ratio.toFixed(1) + '× realtid';
+  }catch(e){
+    err(label + ' misslyckades: ' + (e.stack || e.message));
+    $('synStat').textContent = 'Misslyckades — se loggen.';
+  }finally{ setBusy(false); }
+}
+
+$('word').onclick     = ()=> say(WORD, 'Ord');
+$('sentence').onclick = ()=> say(SENT, 'Mening');
+$('ownGo').onclick    = ()=> say($('own').value || WORD, 'Egen text');
+
+/* ---------- 3. the built-in voice, for comparison ---------- */
+function sysSay(text, label){
+  if(!window.speechSynthesis){ err('speechSynthesis saknas.'); return; }
+  if(speechSynthesis.speaking || speechSynthesis.pending) speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = 'sv-SE';
+  u.rate = 0.8;
+  const sv = speechSynthesis.getVoices().filter(v => (v.lang||'').toLowerCase().startsWith('sv'));
+  if(sv.length) u.voice = sv[0];
+  const started = performance.now();
+  u.onstart = ()=> log(label + ' (system): började efter ' + fmtMs(performance.now()-started));
+  u.onend   = ()=> log(label + ' (system): klar efter ' + fmtMs(performance.now()-started));
+  u.onerror = e => err(label + ' (system) fel: ' + e.error);
+  speechSynthesis.speak(u);
+  speechSynthesis.resume();
+  $('sysStat').textContent = label + ' med ' + (sv.length ? sv[0].name : 'standardrösten') +
+    (sv.length ? '  ·  ' + (sv[0].voiceURI || '') : '');
+}
+$('sysWord').onclick     = ()=> sysSay(WORD, 'Ord');
+$('sysSentence').onclick = ()=> sysSay(SENT, 'Mening');
+$('sysOwn').onclick      = ()=> sysSay($('own').value || WORD, 'Egen text');
+
+ok('Klar att testa.');
+</script>
+</body>
+</html>
