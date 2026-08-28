@@ -63,20 +63,30 @@ self.addEventListener('fetch', e=>{
   if(url.origin !== self.location.origin) return;
 
   /* The page itself is network-first: a new version must never be held back
-     by the cache. The stored copy is only for having no network at all. */
+     by the cache. The stored copy is only for having no network at all.
+
+     Going to the network is not enough on its own — a plain fetch() is still
+     answered by the HTTP cache, and GitHub Pages serves the page with
+     max-age=600. A cold start within ten minutes of a deploy would then load
+     the old version off disk without ever asking the server. 'no-cache' sends
+     the ETag along and revalidates instead, so an unchanged page costs a 304
+     and a changed one arrives immediately. The override is passed through a
+     second attempt without it, in case a browser rejects re-initialising a
+     navigation request. */
   if(req.mode === 'navigate'){
     e.respondWith((async ()=>{
-      try{
-        const res = await fetch(req);
+      const fromNetwork = async init =>{
+        const res = await fetch(req, init);
         if(res && res.ok){
           const c = await caches.open(CACHE);
           c.put('./index.html', res.clone());
         }
         return res;
-      }catch(err){
-        const c = await caches.open(CACHE);
-        return (await c.match('./index.html')) || (await c.match('./')) || Response.error();
-      }
+      };
+      try{ return await fromNetwork({cache:'no-cache'}); }catch(err){}
+      try{ return await fromNetwork(); }catch(err){}
+      const c = await caches.open(CACHE);
+      return (await c.match('./index.html')) || (await c.match('./')) || Response.error();
     })());
     return;
   }
