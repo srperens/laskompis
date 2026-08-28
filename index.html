@@ -1466,25 +1466,28 @@ function micGate(on){ gated=on; }
 
 /* ================= level meter + voice onset ================= */
 let audioCtx=null, analyser=null, dataArr=null, rafId=null, wasLoud=false;
-let micStream=null;
+let micStream=null, micSrc=null;
 
-/* The stream is requested once per page load and kept. On pause only the
-   audio context is suspended — the tracks are never stopped, so the browser
-   doesn't have to ask for permission again. */
+/* The AudioContext is built once and lives for the whole page. Only the stream
+   and the source node come and go — see releaseAudio() for why the context
+   itself must never be closed. */
 async function ensureAudio(){
   try{
     if(!micStream){
       micStream = await navigator.mediaDevices.getUserMedia({audio:{
         echoCancellation:true, noiseSuppression:true, autoGainControl:true
       }});
+      micSrc = null;   // any earlier source node belongs to a stream that is gone
     }
     if(!audioCtx){
       audioCtx = new (window.AudioContext||window.webkitAudioContext)();
-      const src = audioCtx.createMediaStreamSource(micStream);
       analyser = audioCtx.createAnalyser();
       analyser.fftSize = 1024;
-      src.connect(analyser);
       dataArr = new Uint8Array(analyser.fftSize);
+    }
+    if(!micSrc){
+      micSrc = audioCtx.createMediaStreamSource(micStream);
+      micSrc.connect(analyser);
     }
     if(audioCtx.state === 'suspended') await audioCtx.resume();
     if(rafId) cancelAnimationFrame(rafId);
@@ -1499,12 +1502,18 @@ async function ensureAudio(){
 }
 
 /* Backgrounding the app has to actually let go of the microphone. Suspending
-   the audio context is not enough: as long as the tracks are live iOS keeps the
-   recording indicator lit and the microphone reserved, so a frozen tab in the
-   background looks — and to other apps behaves — like it is still listening.
-   Everything is therefore torn down rather than paused, and ensureAudio() builds
-   a fresh graph on the way back; a stopped track can't be restarted, and its
-   MediaStreamSource is dead with it. */
+   the audio context is not enough for that: what holds the microphone are the
+   tracks, and while they are live iOS keeps the recording indicator lit and the
+   device reserved, so a frozen tab in the background behaves — to the system
+   and to other apps — as if it were still listening. So the tracks are stopped
+   and the source node with them; a stopped track can't be restarted, and
+   ensureAudio() wires a fresh one into the same analyser on the way back.
+
+   The AudioContext itself is only suspended, never closed. Closing and
+   reopening it re-negotiates the iOS audio session, and the session that comes
+   back is the voice-call one: output moves from the loudspeaker to the earpiece
+   and everything the app says sounds like a phone call. Closing it buys nothing
+   anyway — it isn't what holds the microphone. */
 function releaseAudio(){
   /* The recognizer holds its own capture, independent of the getUserMedia
      stream, and its onend would restart it — detach that before stopping. */
@@ -1513,15 +1522,12 @@ function releaseAudio(){
   S.ignoreResults = true;
   S.hypConsumed = 0;
   if(rafId){ cancelAnimationFrame(rafId); rafId = null; }
+  if(micSrc){ try{ micSrc.disconnect(); }catch(e){} micSrc = null; }
   if(micStream){
     micStream.getTracks().forEach(t=>{ try{ t.stop(); }catch(e){} });
     micStream = null;
   }
-  if(audioCtx){
-    const ctx = audioCtx;
-    audioCtx = null; analyser = null; dataArr = null;
-    try{ ctx.close(); }catch(e){}
-  }
+  if(audioCtx && audioCtx.state === 'running') audioCtx.suspend().catch(()=>{});
   wasLoud = false; S.onsetAt = null;
   $('lvl').style.width = '0%';
 }
