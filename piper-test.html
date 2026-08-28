@@ -83,11 +83,17 @@ snabbt? Röstmodellen är <code>sv_SE-nst-medium</code>, 60 MB, och laddas ner e
 
 <section>
   <h2>2 · Läs upp</h2>
+  <button id="build">Bygg sessionen</button>
   <button class="go" id="word">Ett ord</button>
+  <button class="go" id="phrase">Kort fras</button>
   <button class="go" id="sentence">En mening</button>
+  <button id="ramp">Trappa — hitta taket</button>
   <input type="text" id="own" placeholder="Egen text" value="Katten satt på mattan.">
   <button id="ownGo">Läs upp egen text</button>
   <p class="stat" id="synStat">Inte startad.</p>
+  <p class="note">Appen säger bara enstaka ord och korta fraser, så det är de två första
+  knapparna som avgör om det här duger. Trappan syntetiserar allt längre texter utan att
+  spela upp dem, och stannar där det brister.</p>
 </section>
 
 <section>
@@ -109,7 +115,35 @@ snabbt? Röstmodellen är <code>sv_SE-nst-medium</code>, 60 MB, och laddas ner e
 <script type="module">
 const VOICE = 'sv_SE-nst-medium';
 const WORD  = 'fönstret';
+const PHRASE= 'Bra läst!';
 const SENT  = 'Hunden springer efter bollen i gräset, och solen skiner.';
+
+/* onnxruntime-web ships its WebAssembly and its JavaScript glue as one unit and
+   they must be the same version. The library points wasmPaths at 1.18.0 on
+   cdnjs but declares the dependency as ^1.18.0, so esm.sh happily resolved it
+   to 1.29.0 — 1.29 glue against a 1.18 binary, which is what made synthesis
+   blow up inside wasm.mjs. Both halves are pinned here, and both are printed to
+   the log, because this is exactly the kind of mismatch that hides. */
+const ORT_VERSION = '1.18.0';
+const LIB_URL = 'https://esm.sh/@mintplex-labs/piper-tts-web@1.0.5' +
+                '?deps=onnxruntime-web@' + ORT_VERSION;
+const WASM_PATHS = {
+  onnxWasm:  'https://cdnjs.cloudflare.com/ajax/libs/onnxruntime-web/' + ORT_VERSION + '/',
+  piperWasm: 'https://cdn.jsdelivr.net/npm/@diffusionstudio/piper-wasm@1.0.0/build/piper_phonemize.wasm',
+  piperData: 'https://cdn.jsdelivr.net/npm/@diffusionstudio/piper-wasm@1.0.0/build/piper_phonemize.data'
+};
+
+/* The app only ever speaks a single word or a short phrase, so those are the
+   lengths that decide whether this is usable at all. The long ones are here to
+   find the ceiling, not because the app needs them. */
+const RAMP = [
+  'ord',
+  PHRASE,
+  'Katten satt på mattan.',
+  'Katten satt på mattan och tittade ut genom fönstret.',
+  SENT,
+  SENT + ' ' + SENT
+];
 
 const $ = id => document.getElementById(id);
 const t0 = performance.now();
@@ -190,12 +224,13 @@ async function play(blob){
 /* ---------- library ---------- */
 let tts = null, session = null;
 
-const buttons = ['dl','clear','word','sentence','ownGo'];
+const buttons = ['dl','clear','build','word','phrase','sentence','ramp','ownGo'];
 const setBusy = on => buttons.forEach(b => { $(b).disabled = on; });
 
 try{
-  log('Importerar piper-tts-web från esm.sh …');
-  tts = await import('https://esm.sh/@mintplex-labs/piper-tts-web@1.0.5');
+  log('Importerar ' + LIB_URL);
+  log('  ONNX-runtime pinnad till ' + ORT_VERSION + ', WASM från ' + WASM_PATHS.onnxWasm);
+  tts = await import(LIB_URL);
   ok('Biblioteket laddat. Exporter: ' + Object.keys(tts).join(', '));
 }catch(e){
   err('Kunde inte ladda biblioteket: ' + (e.stack || e.message));
@@ -264,9 +299,11 @@ $('clear').onclick = async ()=>{
 async function ensureSession(){
   if(session) return session;
   const started = performance.now();
+  $('synStat').textContent = 'Bygger sessionen …';
   log('Bygger TtsSession (hämtar ONNX-runtime, phonemizer och espeak-data) …');
   session = await tts.TtsSession.create({
     voiceId: VOICE,
+    wasmPaths: WASM_PATHS,
     logger: m => log('  piper: ' + m),
     progress: p =>{
       const pct = p.total ? (p.loaded/p.total*100).toFixed(0) : '?';
@@ -294,14 +331,64 @@ async function say(text, label){
       label + ' · ' + fmtMs(synth) + ' för ' + dur.toFixed(2) + ' s ljud · ' +
       ratio.toFixed(1) + '× realtid';
   }catch(e){
-    err(label + ' misslyckades: ' + (e.stack || e.message));
+    err(label + ' misslyckades: ' + (e.name||'') + ' ' + (e.message||e));
+    if(e.stack) err('  ' + e.stack);
     $('synStat').textContent = 'Misslyckades — se loggen.';
   }finally{ setBusy(false); }
 }
 
 $('word').onclick     = ()=> say(WORD, 'Ord');
+$('phrase').onclick   = ()=> say(PHRASE, 'Kort fras');
 $('sentence').onclick = ()=> say(SENT, 'Mening');
 $('ownGo').onclick    = ()=> say($('own').value || WORD, 'Egen text');
+
+/* Building the session is where the runtime and the espeak data come down, and
+   it fails for entirely different reasons than synthesis does. Worth its own
+   button so the two can be told apart. */
+$('build').onclick = async ()=>{
+  if(!tts) return;
+  unlock();
+  setBusy(true);
+  try{
+    await ensureSession();
+    $('synStat').textContent = 'Sessionen är byggd och klar.';
+  }catch(e){
+    err('Sessionen kunde inte byggas: ' + (e.name||'') + ' ' + (e.message||e));
+    if(e.stack) err('  ' + e.stack);
+    $('synStat').textContent = 'Sessionen kunde inte byggas — se loggen.';
+  }finally{ setBusy(false); }
+};
+
+/* Synthesis only, no playback: this is about finding where it breaks, and
+   listening to six versions of the same sentence tells us nothing. */
+$('ramp').onclick = async ()=>{
+  if(!tts) return;
+  unlock();
+  setBusy(true);
+  try{
+    const s = await ensureSession();
+    log('Trappa: syntetiserar ' + RAMP.length + ' längder utan uppspelning …');
+    for(const text of RAMP){
+      const started = performance.now();
+      try{
+        const blob = await s.predict(text);
+        ok('  ' + String(text.length).padStart(3) + ' tecken: ' +
+           fmtMs(performance.now()-started) + ', ' + fmtMB(blob.size) + ' wav');
+      }catch(e){
+        err('  ' + String(text.length).padStart(3) + ' tecken: BRAST — ' +
+            (e.name||'') + ' ' + (e.message||e));
+        if(e.stack) err('    ' + e.stack);
+        $('synStat').textContent = 'Taket ligger under ' + text.length + ' tecken.';
+        return;
+      }
+    }
+    const longest = RAMP[RAMP.length-1].length;
+    ok('Trappan klarade hela vägen, upp till ' + longest + ' tecken.');
+    $('synStat').textContent = 'Klarade alla längder upp till ' + longest + ' tecken.';
+  }catch(e){
+    err('Trappan kunde inte börja: ' + (e.name||'') + ' ' + (e.message||e));
+  }finally{ setBusy(false); }
+};
 
 /* ---------- 3. the built-in voice, for comparison ---------- */
 function sysSay(text, label){
