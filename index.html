@@ -566,16 +566,18 @@ details.osnote > div{margin-top:14px}
         <div class="field">
           <label>Läs så här länge</label>
           <div class="presets" id="targets"></div>
-          <p class="vinfo">Klockan uppe till höger räknar bara medan barnet läser — pausen
-          räknas inte. När tiden är slut tar appen paus av sig själv, och nästa gång du
-          trycker på play börjar ett nytt pass.</p>
+          <p class="vinfo">Klockan räknar bara medan barnet läser. När tiden är slut pausar appen sig själv.</p>
+        </div>
+        <div class="field" id="micField" hidden>
+          <label>Mikrofon</label>
+          <p class="vinfo" id="micNote"></p>
         </div>
       </section>
 
       <section class="tabpage" data-page="voice">
         <div class="field">
-          <label>Talhastighet — ord <span class="val" id="vRate">0,90</span></label>
-          <input type="range" id="rRate" min="0.6" max="1.6" step="0.05" value="0.9">
+          <label>Talhastighet — ord <span class="val" id="vRate">0,80</span></label>
+          <input type="range" id="rRate" min="0.6" max="1.6" step="0.05" value="0.8">
         </div>
         <div class="field">
           <label>Röst</label>
@@ -595,11 +597,11 @@ details.osnote > div{margin-top:14px}
           <label>Ljud</label>
           <label class="check">
             <input type="checkbox" id="cbOk">
-            <span>Pling när ett ord blir rätt <em>avstängt som standard</em></span>
+            <span>Pling när ett ord blir rätt</span>
           </label>
           <label class="check">
             <input type="checkbox" id="cbFail">
-            <span>Ton när ett ord blir fel <em>avstängt som standard — igenkännaren hör fel ibland</em></span>
+            <span>Ton när ett ord blir fel <em>igenkännaren hör fel ibland</em></span>
           </label>
         </div>
         <div class="field">
@@ -612,9 +614,8 @@ details.osnote > div{margin-top:14px}
         <div class="field">
           <label>Vem läser?</label>
           <div class="kids" id="kids"></div>
-          <p class="vinfo">Varje barn har egna inställningar, egen text, egen läsposition,
-          egna poäng och en egen lista över svåra ord. Allt sparas bara i den här
-          webbläsaren — appen har ingen server och skickar ingenting vidare.</p>
+          <p class="vinfo">Varje barn har egen text, läsposition, poäng och lista över svåra ord.
+          Allt sparas bara i den här webbläsaren — inget skickas vidare.</p>
         </div>
 
         <div class="field">
@@ -649,14 +650,13 @@ details.osnote > div{margin-top:14px}
 
         <div class="field">
           <label>Säkerhetskopia</label>
-          <textarea id="backup" placeholder="Tryck på Visa kopia för att få ut all sparad data som text. Klistra in en tidigare kopia här och tryck Läs in kopia för att återställa." spellcheck="false"></textarea>
+          <textarea id="backup" placeholder="Tryck Visa kopia för att få ut datan som text. Klistra in en tidigare kopia och tryck Läs in kopia." spellcheck="false"></textarea>
           <div class="btnrow">
             <button class="tbtn" id="exportBtn">Visa kopia</button>
             <button class="tbtn" id="importBtn">Läs in kopia</button>
           </div>
           <p class="msg" id="kidMsg"></p>
-          <p class="vinfo">En kopia i text är enda sättet att flytta progressen till en
-          annan enhet — och det som gäller om den sparade datan ändå försvinner.</p>
+          <p class="vinfo">Enda sättet att flytta progressen till en annan enhet.</p>
         </div>
       </section>
 
@@ -817,10 +817,12 @@ const S = {
   speakTimer: null,
   speakSeq: 0,
   size: 52,
-  rate: 0.9,
+  rate: 0.8,
   voice: null,
   voiceName: null,  // the voice the adult picked, by name — the object itself
                     // may be missing on another device, the preference isn't
+  voiceURI: null,   // and by URI, which is what tells two voices sharing a name
+                    // apart: Alva (Premium) from Alva (Kompakt)
   lats: [],
   onsetAt: null,    // timestamp of voice onset
   holdTimer: null,
@@ -1488,6 +1490,34 @@ async function ensureAudio(){
   }
 }
 
+/* Backgrounding the app has to actually let go of the microphone. Suspending
+   the audio context is not enough: as long as the tracks are live iOS keeps the
+   recording indicator lit and the microphone reserved, so a frozen tab in the
+   background looks — and to other apps behaves — like it is still listening.
+   Everything is therefore torn down rather than paused, and ensureAudio() builds
+   a fresh graph on the way back; a stopped track can't be restarted, and its
+   MediaStreamSource is dead with it. */
+function releaseAudio(){
+  /* The recognizer holds its own capture, independent of the getUserMedia
+     stream, and its onend would restart it — detach that before stopping. */
+  if(rec){ try{ rec.onend = null; rec.stop(); }catch(e){} rec = null; }
+  S.recLive = false;
+  S.ignoreResults = true;
+  S.hypConsumed = 0;
+  if(rafId){ cancelAnimationFrame(rafId); rafId = null; }
+  if(micStream){
+    micStream.getTracks().forEach(t=>{ try{ t.stop(); }catch(e){} });
+    micStream = null;
+  }
+  if(audioCtx){
+    const ctx = audioCtx;
+    audioCtx = null; analyser = null; dataArr = null;
+    try{ ctx.close(); }catch(e){}
+  }
+  wasLoud = false; S.onsetAt = null;
+  $('lvl').style.width = '0%';
+}
+
 function tick(){
   analyser.getByteTimeDomainData(dataArr);
   let sum=0;
@@ -1741,22 +1771,53 @@ function applyText(){
    where they are installed differs per platform; VOICE_HELP holds the
    per-system instructions shown next to this list. */
 let allVoices = [];
+let voiceTries = 0;
+
+/* Apple ships the same voice in several qualities under one and the same name:
+   the list can hold three entries all called "Alva". The name therefore cannot
+   address a voice — keying the options by it made every "Alva" resolve to the
+   first match, which is the compact one, so a downloaded premium voice was
+   unreachable even when the browser did expose it. voiceURI is unique per voice
+   and, on Apple platforms, also spells out which quality it is. */
+const voiceKey = v => v.voiceURI || v.name;
+
+const QUALITY = [
+  [/premium/,  'Premium'],
+  [/enhanced/, 'Enhanced'],
+  [/siri/,     'Siri'],
+  [/compact/,  'Kompakt']
+];
+function voiceQuality(v){
+  const u = (v.voiceURI || '').toLowerCase();
+  const hit = QUALITY.find(q => q[0].test(u));
+  return hit ? hit[1] : '';
+}
+/* Best first, so the good voice is the one picked by default on a device that
+   has both. Unranked voices (everything outside Apple's naming) sort in the
+   middle rather than last — a Google or Microsoft voice beats a compact one. */
+const qRank = v => ({Premium:0, Enhanced:1, Siri:2, Kompakt:4})[voiceQuality(v)] ?? 3;
 
 function loadVoices(){
   const sel = $('voice');
   allVoices = speechSynthesis.getVoices();
   if(!allVoices.length){
-    // Chrome fills the list asynchronously and calls back through
-    // onvoiceschanged — but the list can also stay empty for good
+    /* Chrome fills the list asynchronously and calls back through
+       onvoiceschanged — but Safari, especially in a home-screen web app, can
+       leave the list empty without ever firing it. Poll a few times before
+       giving up; the list can also stay empty for good. */
     $('voiceInfo').textContent = 'Ingen röst hittad ännu — så här installerar du en:';
+    if(voiceTries < 12){ voiceTries++; setTimeout(loadVoices, 250); }
     return;
   }
+  voiceTries = 0;
 
   const lang = v => (v.lang||'').replace('_','-');
-  const sv    = allVoices.filter(v=> lang(v).toLowerCase().startsWith('sv'));
+  const sv    = allVoices.filter(v=> lang(v).toLowerCase().startsWith('sv'))
+                         .sort((a,b)=> qRank(a)-qRank(b) || a.name.localeCompare(b.name,'sv'));
   const other = allVoices.filter(v=> !lang(v).toLowerCase().startsWith('sv'));
 
-  const want = S.voiceName || (S.voice && S.voice.name);
+  const wantURI  = S.voiceURI  || (S.voice && voiceKey(S.voice));
+  const wantName = S.voiceName || (S.voice && S.voice.name);
   sel.innerHTML = '';
 
   const addGroup = (label, list) => {
@@ -1765,8 +1826,11 @@ function loadVoices(){
     g.label = label;
     list.forEach(v=>{
       const o = document.createElement('option');
-      o.value = v.name;
-      o.textContent = v.name + '  ·  ' + lang(v) + (v.localService ? '' : '  · nät');
+      o.value = voiceKey(v);
+      const q = voiceQuality(v);
+      o.textContent = v.name + '  ·  ' + lang(v) +
+                      (q ? '  ·  ' + q : '') +
+                      (v.localService ? '' : '  ·  nät');
       g.appendChild(o);
     });
     sel.appendChild(g);
@@ -1775,22 +1839,29 @@ function loadVoices(){
   addGroup('Svenska (' + sv.length + ')', sv);
   addGroup('Övriga språk — nödlösning', other);
 
-  /* Fall back silently when the remembered voice isn't installed here, but
-     keep S.voiceName untouched: plugging the same profile into a device that
-     does have the voice should bring it back. */
-  const pick = allVoices.find(v=>v.name===want) || sv[0] || allVoices[0];
+  /* Fall back silently when the remembered voice isn't installed here, but keep
+     S.voiceName and S.voiceURI untouched: plugging the same profile into a
+     device that does have the voice should bring it back. The URI is tried
+     first since it is what actually identifies a voice; the name is the
+     cross-device fallback, since URIs differ between platforms. */
+  const pick = allVoices.find(v=> voiceKey(v)===wantURI)
+            || allVoices.find(v=> v.name===wantName)
+            || sv[0] || allVoices[0];
   S.voice = pick;
-  sel.value = pick.name;
+  sel.value = voiceKey(pick);
 
+  const best = sv.length ? voiceQuality(sv[0]) : '';
   $('voiceInfo').textContent = sv.length > 1
-    ? sv.length + ' svenska röster hittade.'
+    ? sv.length + ' svenska röster hittade' +
+      (best ? ' — bäst är ' + sv[0].name + ' (' + best + ').' : '.')
     : sv.length === 1
       ? 'Bara en svensk röst hittad — så här får du fler:'
       : 'Ingen svensk röst hittad — så här installerar du en:';
 
   sel.onchange = ()=>{
-    S.voice = allVoices.find(v=>v.name===sel.value) || null;
+    S.voice = allVoices.find(v=> voiceKey(v)===sel.value) || null;
     S.voiceName = S.voice ? S.voice.name : null;
+    S.voiceURI  = S.voice ? voiceKey(S.voice) : null;
     remember();
     testVoice();
   };
@@ -1811,39 +1882,39 @@ const VOICE_HELP = {
   mac: {
     name: 'macOS',
     path: 'Systeminställningar › Hjälpmedel › Uppläsning och tal › Systemröst › Hantera röster…',
-    body: 'Välj Svenska och ladda ner <b>Alva (Premium)</b> — den är gratis, låter klart bäst av de svenska, och är den appen ska använda. Nedladdningen är stor, så ta den över wifi. Menyn hette <b>Talat innehåll</b> före macOS 26.',
+    body: 'Välj Svenska och ladda ner <b>Alva (Premium)</b> — gratis, och klart bäst av de svenska. Menyn hette <b>Talat innehåll</b> före macOS 26.',
     open: 'x-apple.systempreferences:com.apple.Accessibility-Settings.extension',
     openLabel: 'Öppna Hjälpmedel'
   },
   ios: {
     name: 'iPhone och iPad',
     path: 'Inställningar › Hjälpmedel › Uppläsning och tal › Röster › Svenska',
-    body: 'Tryck på nedladdningsikonen vid <b>Alva</b> och välj <b>Premium</b> om den erbjuds — det är den bästa svenska rösten, och den är gratis. <b>Klara</b> är alternativet. Menyn hette <b>Talat innehåll</b> före iOS 26.',
-    manual: 'iOS låter inte en webbsida öppna Inställningar, så den biten får du gå själv.'
+    body: 'Ladda ner <b>Alva</b> i kvaliteten <b>Premium</b> om den erbjuds — bäst av de svenska, och gratis. <b>Klara</b> är alternativet. Menyn hette <b>Talat innehåll</b> före iOS 26.<br>Ladda om sidan efteråt, annars ser Safari inte den nya rösten.',
+    manual: 'iOS släpper inte in webbsidor i Inställningar — den biten får du gå själv.'
   },
   win: {
     name: 'Windows',
     path: 'Inställningar › Tid och språk › Tal › Hantera röster › Lägg till röster',
-    body: 'Välj Svenska och tryck Lägg till. Windows enda svenska systemröst heter <b>Microsoft Bengt</b>. Vill du ha något bättre är <b>Microsoft Edge</b> genvägen: Edge har svenska neuronröster inbyggda som dyker upp i listan ovan märkta <b>Online (Natural)</b>, helt utan installation.',
+    body: 'Windows enda svenska systemröst heter <b>Microsoft Bengt</b>. <b>Microsoft Edge</b> är genvägen till något bättre: dess svenska neuronröster dyker upp i listan märkta <b>Online (Natural)</b>, utan installation.',
     open: 'ms-settings:speech',
     openLabel: 'Öppna röstinställningarna'
   },
   android: {
     name: 'Android',
     path: 'Inställningar › Tillgänglighet › Text till tal › kugghjulet vid motorn › Installera röstdata › Svenska',
-    body: 'Motorn heter <b>Taligenkänning och talsyntes från Google</b>. På vissa telefoner ligger inställningen under Inställningar › System › Språk och inmatning i stället. Starta om webbläsaren efter nedladdningen.',
-    manual: 'Android släpper inte in webbsidor i systeminställningarna, så den biten får du gå själv.'
+    body: 'Motorn heter <b>Taligenkänning och talsyntes från Google</b>, och ligger på vissa telefoner under Inställningar › System › Språk och inmatning. Starta om webbläsaren efteråt.',
+    manual: 'Android släpper inte in webbsidor i systeminställningarna — den biten får du gå själv.'
   },
   cros: {
     name: 'ChromeOS',
     path: 'Inställningar › Tillgänglighet › Text till tal › Röstinställningar för Text till tal',
     body: 'Välj en svensk röst och slå på <b>Använd en naturlig röst när enheten är online</b>.',
-    manual: 'Webbsidor får inte länka till chrome://-sidor, så den biten får du gå själv.'
+    manual: 'Webbsidor får inte länka till chrome://-sidor — den biten får du gå själv.'
   },
   other: {
     name: 'Linux och övriga',
     path: 'Systemets talsyntes — speech-dispatcher med espeak-ng eller mbrola',
-    body: 'De inbyggda rösterna låter ofta robotaktigt. I Chrome finns i stället Googles nätröster — <b>Google svenska</b> i listan ovan — som låter betydligt bättre och inte kräver någon installation.'
+    body: 'De inbyggda rösterna låter ofta robotaktiga. Chrome har i stället Googles nätröster — <b>Google svenska</b> i listan — som låter bättre och inte kräver installation.'
   }
 };
 
@@ -1872,11 +1943,11 @@ function detectBrowser(){
 }
 
 const BROWSER_NOTE = {
-  chrome:  'Chrome lägger till Googles nätröster utöver systemets. De är märkta <b>nät</b> i listan ovan, kräver internet och behöver inte installeras.',
-  edge:    'Edge har egna svenska neuronröster som inte behöver installeras. De är märkta <b>nät</b> i listan ovan och heter <b>Online (Natural)</b>.',
-  safari:  'Safari visar bara röster som är installerade i systemet — inga nätröster. Har du precis installerat en röst måste sidan laddas om innan den syns.',
-  firefox: 'Firefox saknar taligenkänning, så appen kan inte lyssna här. Uppläsningen fungerar med systemets röster.',
-  other:   'Vilka röster som syns beror på webbläsaren: Chrome och Edge lägger till nätröster, Safari visar bara de som är installerade i systemet.'
+  chrome:  'Chrome lägger till Googles nätröster utöver systemets — märkta <b>nät</b>, kräver internet, ingen installation.',
+  edge:    'Edge har egna svenska neuronröster, märkta <b>nät</b> och <b>Online (Natural)</b>. Ingen installation.',
+  safari:  'Safari visar bara röster som är installerade i systemet. En nyss nedladdad röst syns först efter att sidan laddats om.',
+  firefox: 'Firefox saknar taligenkänning, så appen kan inte lyssna här. Uppläsningen fungerar.',
+  other:   'Vilka röster som syns beror på webbläsaren: Chrome och Edge lägger till nätröster, Safari bara systemets.'
 };
 
 function renderVoiceHelp(){
@@ -1893,7 +1964,7 @@ function renderVoiceHelp(){
     '<p>' + h.body + '</p>' +
     (h.open
       ? '<p class="openrow"><a class="tbtn" href="' + h.open + '">' + h.openLabel + '</a>' +
-        '<span>Webbläsaren frågar först om den får öppna inställningarna.</span></p>'
+        '<span>Webbläsaren frågar först.</span></p>'
       : (h.manual ? '<p class="manual">' + h.manual + '</p>' : ''));
   $('voiceBrowser').innerHTML = BROWSER_NOTE[detectBrowser()] || BROWSER_NOTE.other;
   $('voiceHelp').innerHTML = card(VOICE_HELP[os] || VOICE_HELP.other);
@@ -1901,6 +1972,20 @@ function renderVoiceHelp(){
     .filter(k => k !== os)
     .map(k => '<div class="note">' + card(VOICE_HELP[k]) + '</div>')
     .join('');
+}
+
+/* The app hands the microphone back the moment it goes into the background, so
+   the permission is asked for again on the way in. On iOS that is the norm
+   anyway — Safari forgets the grant between page loads unless the site is set
+   to Tillåt by hand — so the way out of the prompt is worth spelling out. */
+const MIC_NOTE = {
+  ios: 'Appen släpper mikrofonen så fort du växlar bort från den, så iOS frågar om lov igen. Slipp frågan: <b>aA</b> i adressfältet › <b>Inställningar för webbplats</b> › <b>Mikrofon</b> › <b>Tillåt</b>.',
+  other: 'Appen släpper mikrofonen så fort du växlar bort från den, och ber om den igen när du trycker på play.'
+};
+
+function renderMicNote(){
+  $('micNote').innerHTML = MIC_NOTE[detectOS()] || MIC_NOTE.other;
+  $('micField').hidden = false;
 }
 
 /* ================= profiles + local storage ================= */
@@ -1933,7 +2018,7 @@ function newProfile(name, avatar){
     hard: {},
     settings: {
       size:52, holdoff:8000, strict:'normal', target:0,
-      rate:0.9, voice:null, sndOk:false, sndFail:false, vol:0.85
+      rate:0.8, voice:null, voiceURI:null, sndOk:false, sndFail:false, vol:0.85
     }
   };
 }
@@ -1970,8 +2055,11 @@ function sanitize(raw){
       strict:  STRICTNESS[st.strict] ? st.strict : 'normal',
       // only an offered length, so a hand-edited value can't set an odd goal
       target:  TARGETS.some(t=>t[1]===st.target) ? st.target : 0,
-      rate:    clampNum(st.rate, 0.6, 1.6, 0.9),
+      rate:    clampNum(st.rate, 0.6, 1.6, 0.8),
       voice:   typeof st.voice === 'string' ? st.voice.slice(0,90) : null,
+      /* The name alone can't tell Alva (Premium) from Alva (Compact) — Apple
+         ships both under one name. The URI is what actually addresses a voice. */
+      voiceURI: typeof st.voiceURI === 'string' ? st.voiceURI.slice(0,160) : null,
       sndOk:   !!st.sndOk,
       sndFail: !!st.sndFail,
       vol:     clampNum(st.vol, 0, 1, 0.85)
@@ -2016,7 +2104,7 @@ function remember(){
   const p = profile(); if(!p) return;
   p.settings = {
     size:S.size, holdoff:S.holdoff, strict:S.strict, target:S.target, rate:S.rate,
-    voice:S.voiceName, sndOk:S.sndOk, sndFail:S.sndFail, vol:S.vol
+    voice:S.voiceName, voiceURI:S.voiceURI, sndOk:S.sndOk, sndFail:S.sndFail, vol:S.vol
   };
   /* During the hard-word review S.lines holds the review words, not the text —
      saving then would replace the child's reading text with six loose words. */
@@ -2035,8 +2123,9 @@ function applyProfile(p){
   S.timeMs = 0; S.runSince = null; S.targetDone = false;
   stopClock();
   S.voiceName = st.voice;
+  S.voiceURI  = st.voiceURI || null;
   S.voice = null;
-  if(window.speechSynthesis) loadVoices();
+  if(window.speechSynthesis){ voiceTries = 0; loadVoices(); }
 
   S.reviewing = false; S.source = null;
   S.hard.clear(); $('roHard').textContent = 0;
@@ -2396,8 +2485,32 @@ const flush = ()=>{
   if(S.running){ bankTime(); S.runSince = Date.now(); }
   remember(); saveNow();
 };
-window.addEventListener('pagehide', flush);
-document.addEventListener('visibilitychange', ()=>{ if(document.hidden) flush(); });
+/* Going away must also hand the microphone back — see releaseAudio(). The
+   session is paused rather than kept nominally running: on mobile the page is
+   frozen the moment it is backgrounded, so a "running" session would be deaf
+   anyway, and coming back needs a user gesture regardless (iOS only lets
+   getUserMedia and the first speak() through from inside one). */
+const goAway = ()=>{
+  if(S.running) stop();          // banks the time and writes the profile
+  releaseAudio();
+  /* A cancelled utterance's onend may never arrive from a frozen page, and the
+     half-duplex gate it was going to lift would then keep the microphone muted
+     for the rest of the session. Retire the turn by hand. */
+  if(window.speechSynthesis) speechSynthesis.cancel();
+  S.speakSeq++;
+  clearTimeout(S.speakTimer);
+  S.speaking = false;
+  micGate(false);
+  flush();
+};
+window.addEventListener('pagehide', goAway);
+document.addEventListener('visibilitychange', ()=>{
+  if(document.hidden){ goAway(); return; }
+  /* Back in the foreground: the usual reason for leaving is a trip to the
+     system settings to download a voice, and Safari only reveals it to the page
+     once the list is re-read. */
+  if(window.speechSynthesis){ voiceTries = 0; loadVoices(); }
+});
 
 $('clockBox').onclick = e=>{ dropFocus(e); resetClock(); };
 
@@ -2438,6 +2551,7 @@ buildAvatars();
 buildTargets();
 setIcons();
 renderVoiceHelp();
+renderMicNote();
 renderInstall();
 initStore();
 applyProfile(profile());   // sets the text, the position, the settings and the voice
