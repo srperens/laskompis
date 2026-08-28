@@ -109,6 +109,15 @@ snabbt? Röstmodellen är <code>sv_SE-nst-medium</code>, 60 MB, och laddas ner e
 </section>
 
 <section>
+  <h2>2b · Kommer det ut något ljud alls?</h2>
+  <button id="toneEl">Testton via &lt;audio&gt;</button>
+  <button id="toneWA">Testton via Web Audio</button>
+  <button id="again">Spela senaste igen</button>
+  <p class="stat" id="toneStat">Hörs den ena men inte den andra är det ljudomkopplaren:
+  Web Audio tystas av tyst läge på iPhone, <code>&lt;audio&gt;</code> gör det inte.</p>
+</section>
+
+<section>
   <h2>3 · Jämför med systemrösten</h2>
   <button id="sysWord">Ett ord</button>
   <button id="sysSentence">En mening</button>
@@ -225,24 +234,95 @@ async function renderEnv(){
 }
 
 /* ---------- audio ---------- */
-/* iOS only lets an AudioContext start from inside a user gesture, and every
-   button here calls this synchronously before awaiting anything. Playing the
-   result through Web Audio rather than an <audio> element matters: the blob is
-   only ready after several awaits, by which time the gesture is long gone and
-   audio.play() would be refused. */
-let ctx = null;
+/* Playback goes through an <audio> element, not Web Audio, and that is the whole
+   point. On iPhone the hardware mute switch silences Web Audio — it lands in the
+   ambient audio session — while a media element gets the playback session and is
+   heard regardless. The app's own speechSynthesis is audible for the same
+   reason, which is exactly why Piper appeared to synthesize into nothing.
+
+   The catch a media element brings is the gesture: iOS only allows play() from
+   inside a user interaction, and the blob is ready several awaits later. So the
+   element is unlocked once, during the first tap, by playing a tenth of a second
+   of silence through it. After that the same element may be played
+   programmatically for the rest of the page's life. */
+const player = new Audio();
+player.setAttribute('playsinline', '');
+player.preload = 'auto';
+
+let ctx = null, unlocked = false, lastBlob = null, lastUrl = null;
+
+function silentWav(ms = 100, rate = 8000){
+  const n = Math.round(rate * ms / 1000);
+  const b = new Uint8Array(44 + n);
+  const dv = new DataView(b.buffer);
+  const ascii = (o, t) => { for(let i=0;i<t.length;i++) b[o+i] = t.charCodeAt(i); };
+  ascii(0,'RIFF');  dv.setUint32(4, 36 + n, true);  ascii(8,'WAVE');
+  ascii(12,'fmt '); dv.setUint32(16, 16, true);     dv.setUint16(20, 1, true);
+  dv.setUint16(22, 1, true); dv.setUint32(24, rate, true); dv.setUint32(28, rate, true);
+  dv.setUint16(32, 1, true); dv.setUint16(34, 8, true);
+  ascii(36,'data'); dv.setUint32(40, n, true);
+  b.fill(128, 44);                       // 8-bit unsigned silence sits at 128
+  return new Blob([b], {type:'audio/wav'});
+}
+
+/* Must be called synchronously from the click handler, before any await. */
 function unlock(){
   if(!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
   if(ctx.state === 'suspended') ctx.resume();
+  if(unlocked) return;
+  unlocked = true;
+  player.src = URL.createObjectURL(silentWav());
+  player.play().then(
+    () => ok('Ljudelementet upplåst.'),
+    e  => e.name === 'AbortError'
+      /* Expected: the silence is cut off the moment the real audio replaces the
+         source, which is the same tap. The unlock still counts. */
+      ? ok('Ljudelementet upplåst (tystnaden avbröts av nästa ljud, som avsett).')
+      : err('Ljudelementet nekades: ' + (e.name||'') + ' ' + (e.message||e))
+  );
 }
+
 async function play(blob){
+  lastBlob = blob;
+  if(lastUrl) URL.revokeObjectURL(lastUrl);
+  lastUrl = URL.createObjectURL(blob);
+  player.src = lastUrl;
+  try{
+    await player.play();
+  }catch(e){
+    err('play() nekades: ' + (e.name||'') + ' ' + (e.message||e) +
+        ' — troligen borttappad användargest.');
+  }
+  /* Duration is only known once metadata has arrived, so wait briefly for it
+     rather than reporting NaN. */
+  if(!isFinite(player.duration)){
+    await new Promise(r => {
+      const done = ()=>{ player.removeEventListener('loadedmetadata', done); r(); };
+      player.addEventListener('loadedmetadata', done);
+      setTimeout(done, 1500);
+    });
+  }
+  log('  <audio>: paused=' + player.paused + ', volume=' + player.volume +
+      ', muted=' + player.muted + ', längd=' + (isFinite(player.duration) ?
+      player.duration.toFixed(2) + ' s' : 'okänd'));
+  return isFinite(player.duration) ? player.duration : 0;
+}
+
+/* Web Audio playback of the same blob, kept only so the two paths can be
+   compared — if this one is silent and the element is not, the mute switch is
+   the answer. */
+async function playViaWebAudio(blob){
   const buf = await ctx.decodeAudioData(await blob.arrayBuffer());
   const src = ctx.createBufferSource();
   src.buffer = buf;
   src.connect(ctx.destination);
   src.start();
+  log('  Web Audio: ' + buf.duration.toFixed(2) + ' s, ctx.state=' + ctx.state);
   return buf.duration;
 }
+
+player.addEventListener('error', ()=>
+  err('<audio> fel: ' + (player.error ? 'code ' + player.error.code : 'okänt')));
 
 /* ---------- library ---------- */
 let tts = null, session = null;
@@ -463,6 +543,47 @@ function sysSay(text, label){
   $('sysStat').textContent = label + ' med ' + (sv.length ? sv[0].name : 'standardrösten') +
     (sv.length ? '  ·  ' + (sv[0].voiceURI || '') : '');
 }
+/* ---------- 2b. is any sound coming out at all? ---------- */
+/* Piper is out of the picture here: a plain tone down each of the two paths
+   separates "the device makes no sound" from "the synthesis is inaudible". */
+function tone(){
+  const rate = 22050, secs = 0.5, n = Math.round(rate*secs);
+  const b = new Uint8Array(44 + n*2);
+  const dv = new DataView(b.buffer);
+  const ascii = (o,t)=>{ for(let i=0;i<t.length;i++) b[o+i]=t.charCodeAt(i); };
+  ascii(0,'RIFF');  dv.setUint32(4, 36+n*2, true); ascii(8,'WAVE');
+  ascii(12,'fmt '); dv.setUint32(16,16,true);      dv.setUint16(20,1,true);
+  dv.setUint16(22,1,true); dv.setUint32(24,rate,true); dv.setUint32(28,rate*2,true);
+  dv.setUint16(32,2,true); dv.setUint16(34,16,true);
+  ascii(36,'data'); dv.setUint32(40,n*2,true);
+  for(let i=0;i<n;i++){
+    const env = Math.min(1, i/400, (n-i)/400);      // no clicks at the edges
+    dv.setInt16(44+i*2, Math.sin(2*Math.PI*440*i/rate)*12000*env, true);
+  }
+  return new Blob([b],{type:'audio/wav'});
+}
+
+$('toneEl').onclick = async ()=>{
+  unlock();
+  log('Testton via <audio> …');
+  await play(tone());
+  $('toneStat').textContent = 'Spelade 440 Hz genom <audio>. Hörde du den?';
+};
+$('toneWA').onclick = async ()=>{
+  unlock();
+  log('Testton via Web Audio …');
+  try{ await playViaWebAudio(tone()); }
+  catch(e){ err('Web Audio gav fel: ' + (e.name||'') + ' ' + (e.message||e)); }
+  $('toneStat').textContent = 'Spelade 440 Hz genom Web Audio. Tyst men hördes ' +
+    'den förra? Då är det ljudomkopplaren.';
+};
+$('again').onclick = async ()=>{
+  unlock();
+  if(!lastBlob){ log('Inget syntetiserat än.'); return; }
+  log('Spelar senaste igen via <audio> …');
+  await play(lastBlob);
+};
+
 $('sysWord').onclick     = ()=> sysSay(WORD, 'Ord');
 $('sysSentence').onclick = ()=> sysSay(SENT, 'Mening');
 $('sysOwn').onclick      = ()=> sysSay($('own').value || WORD, 'Egen text');
