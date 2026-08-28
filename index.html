@@ -1516,8 +1516,23 @@ function speakSystem(text, rate){
    system voice — a reading app must never fall silent on a child waiting for a
    word. */
 const PIPER = [
-  { id:'sv_SE-nst-medium', name:'Svensk neural röst (NST)', mb:60 }
+  { id:'sv_SE-alma-medium', name:'Alma', mb:60, hf:'sv/sv_SE/alma/medium/sv_SE-alma-medium.onnx' },
+  { id:'sv_SE-lisa-medium', name:'Lisa', mb:60, hf:'sv/sv_SE/lisa/medium/sv_SE-lisa-medium.onnx' },
+  { id:'sv_SE-nst-medium',  name:'NST',  mb:60 }
 ];
+
+/* Only NST is in the mirror the library ships with; Alma and Lisa live in the
+   canonical piper-voices repository. The library builds every model URL as
+   `${HF_BASE}/${PATH_MAP[id]}` with HF_BASE pinned to that mirror, so the path
+   climbs back out to the host root and down into the other repository instead.
+   Blunt, but it leaves everything the library does around that URL intact — that
+   it only caches what matches huggingface.co, and that its cache key is the
+   file's basename, which stays unique per voice either way. */
+const PIPER_ESCAPE = '../../../../rhasspy/piper-voices/resolve/main/';
+function registerPiperPaths(lib){
+  if(!lib || !lib.PATH_MAP) return;
+  PIPER.forEach(v =>{ if(v.hf) lib.PATH_MAP[v.id] = PIPER_ESCAPE + v.hf; });
+}
 const PIPER_KEY = 'piper:';
 const isPiperKey = k => typeof k === 'string' && k.indexOf(PIPER_KEY) === 0;
 const piperIdOf  = k => k.slice(PIPER_KEY.length);
@@ -1611,6 +1626,27 @@ function piperOff(){
    picking it here and now, and a profile arriving on a device that has never
    seen it. The preference travels with the profile, the 60 MB does not, and
    starting an unasked-for download on someone's data plan is not on. */
+/* The library's own bookkeeping is not a trustworthy answer to "is this model
+   already here?". Its download() writes to the Origin Private File System without
+   awaiting the write — and then reads the file straight back, which on a fast
+   machine hands onnxruntime a half-written model and fails with "No graph was
+   found in the protobuf". So the download step is skipped entirely: letting
+   TtsSession.create() fetch it uses the blob it just received, in memory, and the
+   service worker stores the response on the way past. This asks that cache
+   directly. The name is shared with sw.js and must stay in step. */
+const PIPER_CACHE = 'laskompis-models-v1';
+
+async function piperCached(id){
+  try{
+    if(!window.caches || !piperLib || !piperLib.PATH_MAP) return false;
+    const path = piperLib.PATH_MAP[id];
+    if(!path) return false;
+    const c = await caches.open(PIPER_CACHE);
+    // the path may climb out of the base, so normalise the way fetch() would
+    return !!(await c.match(new URL(piperLib.HF_BASE + '/' + path).href));
+  }catch(e){ return false; }
+}
+
 async function piperEnsure(id, allowDownload){
   if(piperState === 'ready' && piperFor === id) return;
   if(piperState === 'busy') return;
@@ -1618,28 +1654,40 @@ async function piperEnsure(id, allowDownload){
   piperSession = null; piperFor = null;
   try{
     piperNote('Förbereder rösten …');
-    if(!piperLib) piperLib = await import(PIPER_LIB);
-    let have = [];
-    try{ have = await piperLib.stored(); }catch(err){}
-    if(have.indexOf(id) === -1){
-      if(!allowDownload){
-        piperState = 'off';
-        piperNote('Den neurala rösten är vald men inte nedladdad på den här enheten. ' +
-                  'Välj den i listan igen för att hämta den.');
-        return;
-      }
-      const meta = PIPER.find(v => v.id === id);
-      await piperLib.download(id, p =>{
-        const pct = p.total ? Math.round(p.loaded / p.total * 100) : 0;
-        piperNote('Laddar ner rösten … ' + pct + ' % av ' + (meta ? meta.mb : '?') + ' MB');
-      });
+    if(!piperLib){
+      piperLib = await import(PIPER_LIB);
+      registerPiperPaths(piperLib);
     }
-    piperNote('Startar rösten …');
-    piperSession = await piperLib.TtsSession.create({ voiceId: id, wasmPaths: PIPER_WASM });
+    const cached = await piperCached(id);
+    if(!cached && !allowDownload){
+      piperState = 'off';
+      piperNote('Den neurala rösten är vald men inte nedladdad på den här enheten. ' +
+                'Välj den i listan igen för att hämta den.');
+      return;
+    }
+    const meta = PIPER.find(v => v.id === id);
+    piperNote(cached ? 'Startar rösten …' : 'Laddar ner rösten …');
+    /* TtsSession's constructor is a singleton: handed a second voice it hands
+       back the first session, overwrites its voiceId and keeps the model it
+       already loaded. Without clearing the instance, every voice picked after
+       the first would silently still be the first one — the download never even
+       happens. The discarded session's WebAssembly memory is not reclaimed, as
+       the library exposes no way to release it, but switching voice is something
+       an adult does in the settings now and then, not something the app does. */
+    if(piperLib.TtsSession) piperLib.TtsSession._instance = null;
+    piperSession = await piperLib.TtsSession.create({
+      voiceId: id,
+      wasmPaths: PIPER_WASM,
+      progress: p =>{
+        if(cached || !p.total) return;
+        piperNote('Laddar ner rösten … ' + Math.round(p.loaded / p.total * 100) +
+                  ' % av ' + (meta ? meta.mb : '?') + ' MB');
+      }
+    });
     piperFor = id;
     piperState = 'ready';
-    piperNote('Neural röst aktiv. Den uttalar en del ord fel — talsyntesen bakom den ' +
-              'kan mindre svenska än Apples.');
+    piperNote((cached ? 'Neural röst aktiv, redan nedladdad. ' : 'Neural röst aktiv. ') +
+              'Den uttalar en del ord fel.');
   }catch(e){
     piperGiveUp(e);
   }
@@ -1658,11 +1706,14 @@ function piperResume(){
 }
 
 function speakPiper(text, rate){
+  /* Captured rather than read later: switching voice clears the global while a
+     synthesis may still be in flight. */
+  const session = piperSession;
   const release = beginTurn(text);
   piperRelease = release;
   try{ piperPlayer.pause(); }catch(err){}
   (async ()=>{
-    const blob = await piperSession.predict(text);
+    const blob = await session.predict(text);
     if(piperRelease !== release) return;      // a newer turn took over mid-synthesis
     if(piperUrl) URL.revokeObjectURL(piperUrl);
     piperUrl = URL.createObjectURL(blob);
@@ -1680,7 +1731,13 @@ function speakPiper(text, rate){
     piperPlayer.playbackRate = rate;
     await piperPlayer.play();
   })().catch(e =>{
-    /* Never leave the child in silence: hand this word to the system voice. */
+    /* Assigning a new source rejects the previous play() with AbortError. The
+       app interrupts itself constantly — a word cutting off the encouragement
+       before it — so that is ordinary, not a broken engine, and must not condemn
+       the voice. The newer turn is already speaking; nothing more to do. */
+    if(e && e.name === 'AbortError'){ release(); return; }
+    /* Anything else: never leave the child in silence, hand this word to the
+       system voice. */
     piperGiveUp(e);
     release();
     speakSystem(text, rate);

@@ -9,6 +9,7 @@
 
    Bump CACHE when the shell changes. */
 const CACHE = 'laskompis-v1';
+const MODELS = 'laskompis-models-v1';
 /* The scope root, so a navigation can be told from any other page served from
    the same origin — the cached shell must only ever be the app itself. */
 const ROOT = new URL('./', self.location).pathname;
@@ -29,7 +30,7 @@ self.addEventListener('install', e=>{
 
 self.addEventListener('activate', e=>{
   e.waitUntil((async ()=>{
-    const keep = [CACHE, FONTS];
+    const keep = [CACHE, FONTS, MODELS];
     for(const k of await caches.keys()){
       if(!keep.includes(k)) await caches.delete(k);
     }
@@ -55,6 +56,31 @@ self.addEventListener('fetch', e=>{
       try{
         const res = await fetch(req);
         if(res) c.put(req, res.clone());
+        return res;
+      }catch(err){
+        return Response.error();
+      }
+    })());
+    return;
+  }
+
+  /* The optional neural voice's model is 60 MB, and it has to survive restarts or
+     it is paid for again on every one. The library that loads it caches into the
+     Origin Private File System, but its write is fire-and-forget — download()
+     resolves before the file is on disk — and Safari's support for writing there
+     has been uneven. The Cache API is what this app already stands on, so the
+     model goes in here too, in its own cache so the shell's cleanup can't sweep
+     it. Cache-first without revalidation: the files are addressed by revision and
+     never change under a given URL. */
+  if(url.hostname === 'huggingface.co' && /\.onnx(\.json)?$/.test(url.pathname)){
+    e.respondWith((async ()=>{
+      const c = await caches.open(MODELS);
+      const hit = await c.match(req);
+      if(hit) return hit;
+      try{
+        const res = await fetch(req);
+        // not awaited: 60 MB should not delay handing the response on
+        if(res && res.ok) c.put(req, res.clone()).catch(()=>{});
         return res;
       }catch(err){
         return Response.error();
