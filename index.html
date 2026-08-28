@@ -835,8 +835,13 @@ const S = {
   strict: 'normal',
   hard: new Map(),
   reviewing: false,
-  ignoreResults: false,
+  /* A deadline, not a latch. Its job is to discard the tail of the session we
+     just stopped, and those arrive within milliseconds. As a boolean cleared
+     only by onstart, a single dropped event left the app deaf for the rest of
+     the session — looking perfectly alive the whole time. */
+  ignoreUntil: 0,
   recLive: false,
+  recSeenAt: 0,     // last sign of life from the recognizer
   posSince: 0,
   hypConsumed: 0,
   lastRescue: 0,
@@ -1040,7 +1045,7 @@ function resetTranscript(){
      recognizer fires no onend, so nothing would restart it and the latch below
      would never be released — leaving the app deaf while it looks live. */
   if(!S.recLive){ resetRecognition(); return; }
-  S.ignoreResults = true;            // drop anything arriving before the restart
+  S.ignoreUntil = performance.now() + 1200;   // drop the old session's tail
   try{ rec.stop(); }catch(e){}       // onend restarts, onstart releases the latch
 }
 
@@ -1502,6 +1507,8 @@ function speakSystem(text, rate){
   // only interrupt when something is actually queued — a gratuitous cancel()
   // right before speak() can wedge the synthesizer on iOS
   if(speechSynthesis.speaking || speechSynthesis.pending) speechSynthesis.cancel();
+  // a neural utterance may still be playing — the two must not overlap
+  try{ piperPlayer.pause(); }catch(err){}
   const u = new SpeechSynthesisUtterance(text);
   u.lang = LANG.tag;
   u.rate = rate;
@@ -1722,11 +1729,15 @@ function speakPiper(text, rate){
      synthesis may still be in flight. */
   const session = piperSession;
   const release = beginTurn(text);
+  const myTurn = S.speakSeq;                  // beginTurn just claimed this one
   piperRelease = release;
   try{ piperPlayer.pause(); }catch(err){}
   (async ()=>{
     const blob = await session.predict(text);
-    if(piperRelease !== release) return;      // a newer turn took over mid-synthesis
+    /* The turn counter, not piperRelease: a newer turn may belong to the system
+       voice, which never touches piperRelease, and this synthesis would then
+       have started talking over it. */
+    if(S.speakSeq !== myTurn) return;
     if(piperUrl) URL.revokeObjectURL(piperUrl);
     piperUrl = URL.createObjectURL(blob);
     /* The model has one fixed tempo, so the rate slider is applied on playback.
@@ -1826,8 +1837,9 @@ function releaseAudio(){
   /* The recognizer holds its own capture, independent of the getUserMedia
      stream, and its onend would restart it — detach that before stopping. */
   if(rec){ try{ rec.onend = null; rec.stop(); }catch(e){} rec = null; }
+  unwatchRecognition();
   S.recLive = false;
-  S.ignoreResults = true;
+  S.ignoreUntil = performance.now() + 1200;
   S.hypConsumed = 0;
   if(rafId){ cancelAnimationFrame(rafId); rafId = null; }
   if(micSrc){ try{ micSrc.disconnect(); }catch(e){} micSrc = null; }
@@ -1884,17 +1896,24 @@ function buildRecognizer(){
   r.interimResults=true;
   r.maxAlternatives=1;
 
-  /* Every new session has an empty result list, so the token anchor must be
-     reset. Without this S.hypConsumed points into a list that no longer
-     exists and the alignment silently stops moving the cursor. */
-  r.onstart = ()=>{
-    S.ignoreResults = false;
-    S.hypConsumed = 0;
+  /* Three ways in, because onstart is droppable and it used to be the only one
+     that lifted the latch and marked the session live. Any of them proves a
+     session is running. */
+  const markLive = ()=>{
+    S.ignoreUntil = 0;
     S.recLive = true;
+    S.recSeenAt = performance.now();
   };
+  /* Every new session has an empty result list, so the token anchor must be
+     reset — but only here, where a session genuinely begins. applyAlign clamps
+     it if this event never arrives. */
+  r.onstart = ()=>{ S.hypConsumed = 0; markLive(); };
+  r.onaudiostart = markLive;
+  r.onspeechstart = markLive;
 
   r.onresult = ev=>{
-    if(gated || S.ignoreResults) return;
+    S.recSeenAt = performance.now();   // results are the best proof of all
+    if(gated || performance.now() < S.ignoreUntil) return;
     let full='';
     for(let i=0;i<ev.results.length;i++) full += ev.results[i][0].transcript+' ';
     $('roHyp').textContent = full.trim().slice(-70) || '—';
@@ -1908,9 +1927,20 @@ function buildRecognizer(){
     }
     applyAlign(tokens(full), anyFinal);
   };
+  /* Deliberately does not touch recSeenAt: an error is the opposite of a sign
+     of life, and refreshing it would keep the supervisor quiet through an error
+     storm. */
   r.onerror = ev=>{
-    if(ev.error==='not-allowed') showErr('Mikrofonen blockerades. Tillåt åtkomst och försök igen.');
+    if(ev.error==='not-allowed' || ev.error==='service-not-allowed'){
+      showErr('Mikrofonen blockerades. Tillåt åtkomst och försök igen.');
+      return;
+    }
     if(ev.error==='no-speech') return;
+    /* The microphone can be taken away mid-session — a call arriving, another
+       app claiming it. That session is over and no onend need follow, so mark it
+       dead and let the supervisor rebuild instead of sitting there looking
+       live. */
+    if(ev.error==='audio-capture'){ S.recLive = false; return; }
     /* The app starts without a network now that it can be installed, but
        Chrome's recognizer transcribes server-side and simply fails. Say so
        rather than letting the cursor sit still for no visible reason. */
@@ -1938,12 +1968,45 @@ function buildRecognizer(){
   return r;
 }
 
+/* Every route to a deaf session is silent, and until now every route out of one
+   could give up. start() can return without the session ever beginning; the
+   events that would say so are droppable; and the retry chains both here and in
+   onend stop after a second or two, leaving S.running true with nothing
+   listening. The only recovery left was the rescue in tick(), which needs the
+   child to keep reading loudly into a dead microphone for twice the help delay
+   before it notices — and it reads the level meter, which no longer has
+   automatic gain behind it.
+
+   So a supervisor on its own clock. It never gives up, because giving up is the
+   failure it exists to prevent. Liveness is any sign of life from the recognizer,
+   not just the flag: if results are arriving it stays out of the way whatever the
+   flags say. */
+let recWatch = null;
+
+function watchRecognition(){
+  clearInterval(recWatch);
+  S.recSeenAt = performance.now();
+  recWatch = setInterval(()=>{
+    if(!S.running || S.speaking) return;   // muted on purpose while the app talks
+    const now = performance.now();
+    if(S.recLive){ S.recSeenAt = now; return; }
+    if(now - S.recSeenAt < 5000) return;
+    S.recSeenAt = now;
+    resetRecognition();
+  }, 2500);
+}
+
+function unwatchRecognition(){
+  clearInterval(recWatch);
+  recWatch = null;
+}
+
 /* Speech recognition can wedge itself in states we can't detect or undo —
    the retry loop in onend can also give up for good after ~1 s of failures.
    The reset button is the manual escape hatch: throw the whole recognizer
    instance away and build a fresh one. Reading position and score are kept. */
 function resetRecognition(){
-  S.ignoreResults = true;
+  S.ignoreUntil = performance.now() + 1200;
   S.recLive = false;
   if(rec){
     try{ rec.onend = null; rec.stop(); }catch(e){}  // detach onend so the old instance can't restart itself
@@ -1957,7 +2020,9 @@ function resetRecognition(){
   if(!S.running) return;
   rec = buildRecognizer();
   if(!rec) return;
-  // the old session may still be closing; retry until the new one starts
+  /* The old session may still be closing, so retry — and if these run out, the
+     supervisor comes back around. It used to end here, silently, with the latch
+     still set and the app deaf for the rest of the session. */
   const tryStart = n=>{
     if(!S.running || !rec) return;
     try{ rec.start(); }catch(e){ if(n>0) setTimeout(()=>tryStart(n-1), 200); }
@@ -1987,6 +2052,7 @@ async function start(){
     if(!rec) return;
     S.running=true;
     S.lats=[];
+    watchRecognition();
     const p = profile();
     if(p){ p.sessions = (p.sessions||0) + 1; saveSoon(); }
     // a finished stretch is over: this press starts the next one from zero
@@ -2006,6 +2072,7 @@ async function start(){
 
 function stop(){
   S.running=false;
+  unwatchRecognition();
   bankTime();      // before remember(), so the profile total includes this stretch
   stopClock();
   remember();
