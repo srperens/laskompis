@@ -342,6 +342,51 @@ const NUM_WORDS = (()=>{
 
 const isDigits = t => /^[0-9]+$/.test(t);
 
+/* Swedish letter names are ordinary words. C is said "se", D is "de", R is "är",
+   T is "te" — and a recognizer that hears a child read one of those short words
+   writes the letter instead: "de" comes back as "d", "se" as "c". The word then
+   never matched, and worse, it was close enough to be logged as a misreading, so
+   the child was marked down for reading correctly. Two of the commonest words in
+   Swedish, de and är, sit in this set.
+
+   Only a bare letter against exactly that letter's name is made equivalent, so
+   nothing else in the comparison loosens. */
+const LETTER_NAME = {
+  a:'a', b:'be', c:'se', d:'de', e:'e', f:'ef', g:'ge', h:'hå', i:'i',
+  j:'ji', k:'kå', l:'el', m:'em', n:'en', o:'o', p:'pe', q:'ku', r:'är',
+  s:'es', t:'te', u:'u', v:'ve', w:'dubbelve', x:'eks', y:'y', z:'säta',
+  'å':'å', 'ä':'ä', 'ö':'ö'
+};
+const sameLetter = (a, b) =>
+  (a.length === 1 && LETTER_NAME[a] === b) ||
+  (b.length === 1 && LETTER_NAME[b] === a);
+
+/* The other half of the same problem: words Swedish spells one way and says
+   another. A child reading "det" says "de", and the recognizer writes what it
+   heard. Accepting these is not tolerance — the reading was correct, and the
+   spelling difference is the language's, not the child's. Kept to the pairs that
+   are simply how the word is said, never to near-misses. */
+const SPOKEN = {
+  det:'de', de:'dom', dem:'dom', är:'e',
+  mig:'mej', dig:'dej', sig:'sej',
+  någon:'nån', något:'nåt', några:'nåra',
+  sådan:'sån', sådant:'sånt', sådana:'såna',
+  säga:'säja', sade:'sa', mycket:'mycke'
+};
+const saidAloud = (a, b) => SPOKEN[a] === b || SPOKEN[b] === a;
+
+/* Substitutions the recognizer makes on its own, where the language model
+   prefers a common word over the rare one actually read. "säg" is uncommon and
+   "sig" is everywhere, so a child reading "säg" is handed back "sig" every time
+   — and a word that can never be got past is worse than one that is occasionally
+   let through too easily. Only for pairs that fail systematically, not for
+   anything that merely sounds close; a child reading "hon" for "han" must still
+   be corrected. */
+const HEARD_AS = {
+  'säg': 'sig'
+};
+const heardAs = (a, b) => HEARD_AS[a] === b || HEARD_AS[b] === a;
+
 function numOf(t){
   if(isDigits(t)) return parseInt(t, 10);
   if(NUM_WORDS[t] !== undefined) return NUM_WORDS[t];
@@ -386,6 +431,7 @@ function matches(hyp, ref){
     const hn = numOf(hyp), rn = numOf(ref);
     return hn !== null && rn !== null && hn === rn;
   }
+  if(sameLetter(hyp, ref) || saidAloud(hyp, ref) || heardAs(hyp, ref)) return true;
   const rule = STRICTNESS[S.strict];
   if(rule.first && ref.length >= 4 && hyp[0] !== ref[0]) return false;
   // large length difference = different word, not a pronunciation variant

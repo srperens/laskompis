@@ -28,17 +28,50 @@ const cases = [
   ['20','30',false], ['5','6',false], ['1','7',false], ['100','200',false],
   ['12','13',false], ['tjugo','trettio',false], ['tjugo','tjugoett',false],
   ['katten','katten',true], ['katten','hästen',false],
+
+  // bokstavsnamn: igenkännaren skriver bokstaven när barnet läser ordet
+  ['de','d',true], ['d','de',true],
+  ['se','c',true], ['c','se',true],
+  ['är','r',true], ['te','t',true], ['ge','g',true], ['be','b',true],
+  ['ve','v',true], ['en','n',true], ['el','l',true], ['es','s',true],
+  ['ef','f',true], ['em','m',true], ['ku','q',true], ['eks','x',true],
+  // men inte fel bokstav, och inte bokstav mot annat ord
+  ['de','c',false], ['se','d',false], ['är','s',false],
+  ['de','b',false], ['katten','k',false], ['k','katten',false],
+  ['de','de',true], ['d','d',true],
+
+  // talade former av skrivna ord
+  ['det','de',true], ['de','dom',true], ['dem','dom',true],
+  ['mig','mej',true], ['dig','dej',true], ['sig','sej',true],
+  ['något','nåt',true], ['någon','nån',true], ['sådan','sån',true],
+  ['säga','säja',true], ['sade','sa',true], ['mycket','mycke',true],
+  ['är','e',true],
+  // och inte det som bara liknar
+  ['det','dom',false], ['mig','dej',false], ['något','nån',false],
+
+  // igenkännarens egna utbyten
+  ['säg','sig',true], ['sig','säg',true],
+  ['säg','säg',true],
+];
+
+/* Fall där mild avsiktligt är tillåtande: dess budget är ett tecken även för
+   korta ord, och "släpper igenom nästan allt" är hela poängen med läget. Dessa
+   krävs bara av normal och sträng. */
+const STRIKTA = [
+  ['dem','de',false], ['sin','sen',false], ['ser','får',false],
+  ['han','hon',false], ['hon','han',false], ['d','c',false],
 ];
 
 let FAILURES = 0, TOTAL = 0;
 for (const strict of ['mild','normal','strict']) {
+  const list = strict === 'mild' ? cases : cases.concat(STRIKTA);
   const out = await page.evaluate(({cases, strict}) => {
     S.strict = strict;
     return cases.map(([ref, hyp, want]) => {
       const got = matches(norm(hyp), norm(ref));
       return { ref, hyp, want, got, ok: got === want };
     });
-  }, { cases, strict });
+  }, { cases: list, strict });
   const bad = out.filter(r => !r.ok);
   TOTAL += out.length; FAILURES += bad.length;
   console.log(`stränghet ${strict}: ${out.length - bad.length}/${out.length} rätt`);
