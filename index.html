@@ -2235,11 +2235,8 @@ function testVoice(){
    and iOS 26, so both names are given.
 
    iOS is the exception with no path at all: WebKit hands a page only the
-   pre-installed voices, and a downloaded Alva (Premium) is never among them.
-   Confirmed by an Apple engineer on the developer forums — "It is expected that
-   with Web Speech APIs only the pre-installed voices are available. Optionally
-   downloadable voices are not available." (thread 723503). Sending a parent off
-   to fetch a voice that cannot work is worse than saying so. */
+   pre-installed voices, never a downloaded one, which Apple confirms as intended
+   (developer forums, thread 723503). Hence the neural voice above. */
 const VOICE_HELP = {
   mac: {
     name: 'macOS',
@@ -2250,9 +2247,8 @@ const VOICE_HELP = {
   },
   ios: {
     name: 'iPhone och iPad',
-    path: 'Ingen väg dit — iOS lämnar bara ut sina förinstallerade röster',
-    body: 'Här hjälper det tyvärr inte att ladda ner en röst. Apple ger webbsidor enbart de röster som redan finns i systemet, och de nedladdningsbara — <b>Alva (Premium)</b> och <b>Enhanced</b> — lämnas aldrig ut, hur rätt de än är installerade. Det gäller varenda webbläsare på iPhone, eftersom alla kör Apples motor. Vill du höra de bra svenska rösterna får det bli en dator; på telefonen är den förinstallerade <b>Alva</b> det som finns.',
-    manual: 'Listan längst ner visar exakt vad webbläsaren lämnade ut, om du vill se det själv.'
+    path: 'Ingen väg dit',
+    body: 'Att ladda ner <b>Alva (Premium)</b> hjälper inte: iOS ger webbsidor bara de röster som följde med systemet, och det gäller alla webbläsare på iPhone. Här är den neurala rösten ovan alternativet.'
   },
   win: {
     name: 'Windows',
@@ -2307,7 +2303,7 @@ function detectBrowser(){
 const BROWSER_NOTE = {
   chrome:  'Chrome lägger till Googles nätröster utöver systemets — märkta <b>nät</b>, kräver internet, ingen installation.',
   edge:    'Edge har egna svenska neuronröster, märkta <b>nät</b> och <b>Online (Natural)</b>. Ingen installation.',
-  safari:  'Safari visar bara systemets röster, inga nätröster. På iPhone och iPad dessutom bara de förinstallerade — nedladdade röster lämnas aldrig ut. På Mac syns även de nedladdade, efter en omladdning av sidan.',
+  safari:  'Safari visar bara systemets röster. På Mac även nedladdade, efter en omladdning; på iPhone och iPad enbart de förinstallerade.',
   firefox: 'Firefox saknar taligenkänning, så appen kan inte lyssna här. Uppläsningen fungerar.',
   other:   'Vilka röster som syns beror på webbläsaren: Chrome och Edge lägger till nätröster, Safari bara systemets.'
 };
