@@ -8,14 +8,18 @@
    where the saved profiles live.
 
    Bump CACHE when the shell changes. */
-const CACHE = 'laskompis-v1';
+/* Bumped when the shell's file layout changes, not on every deploy — the shell
+   revalidates on its own. The v1 cache held a self-contained index.html; leaving
+   it behind means a stylesheet and a script that the old service worker had
+   cached cache-first can't outlive the change. */
+const CACHE = 'laskompis-v2';
 const MODELS = 'laskompis-models-v1';
 /* The scope root, so a navigation can be told from any other page served from
    the same origin — the cached shell must only ever be the app itself. */
 const ROOT = new URL('./', self.location).pathname;
 const FONTS = 'laskompis-fonts-v1';
 const SHELL = [
-  './', './index.html', './manifest.webmanifest',
+  './', './index.html', './app.css', './app.js', './manifest.webmanifest',
   './icon-192.png', './icon-512.png', './icon-maskable-512.png', './apple-touch-icon.png'
 ];
 
@@ -91,41 +95,53 @@ self.addEventListener('fetch', e=>{
 
   if(url.origin !== self.location.origin) return;
 
-  /* The page itself is network-first: a new version must never be held back
-     by the cache. The stored copy is only for having no network at all.
+  /* The app's own code — the page, the stylesheet, the script — is network-first:
+     a new version must never be held back by the cache, and the three must never
+     be served from different deploys. The stored copies exist for having no
+     network at all.
 
-     Going to the network is not enough on its own — a plain fetch() is still
-     answered by the HTTP cache, and GitHub Pages serves the page with
-     max-age=600. A cold start within ten minutes of a deploy would then load
-     the old version off disk without ever asking the server. 'no-cache' sends
-     the ETag along and revalidates instead, so an unchanged page costs a 304
-     and a changed one arrives immediately. The override is passed through a
-     second attempt without it, in case a browser rejects re-initialising a
-     navigation request. */
+     Going to the network is not enough on its own. A plain fetch() is still
+     answered by the HTTP cache, and GitHub Pages serves these with max-age=600,
+     so a cold start within ten minutes of a deploy would load the old version off
+     disk without ever asking the server. 'no-cache' sends the ETag along and
+     revalidates instead: an unchanged file costs a 304, a changed one arrives at
+     once. Cache-first here would be actively wrong — it would hand back yesterday's
+     script to today's markup. */
+  const revalidating = (key, offline) => e.respondWith((async ()=>{
+    const store = async res =>{
+      if(res && res.ok && key){
+        const c = await caches.open(CACHE);
+        c.put(key, res.clone());
+      }
+      return res;
+    };
+    /* The second attempt drops the cache override, for a browser that refuses to
+       re-initialise a navigation request. */
+    try{ return await store(await fetch(req, {cache:'no-cache'})); }catch(err){}
+    try{ return await store(await fetch(req)); }catch(err){}
+    return (await offline()) || Response.error();
+  })());
+
   if(req.mode === 'navigate'){
     /* Only the app itself is the shell. Any other page on this origin — a test
        page, a scratch page — is served but never stored, since storing it under
        './index.html' would replace the app's offline copy with it. */
     const isShell = url.pathname === ROOT || url.pathname === ROOT + 'index.html';
-    e.respondWith((async ()=>{
-      const fromNetwork = async init =>{
-        const res = await fetch(req, init);
-        if(res && res.ok && isShell){
-          const c = await caches.open(CACHE);
-          c.put('./index.html', res.clone());
-        }
-        return res;
-      };
-      try{ return await fromNetwork({cache:'no-cache'}); }catch(err){}
-      try{ return await fromNetwork(); }catch(err){}
-      if(!isShell) return Response.error();   // no stored copy to fall back on
+    revalidating(isShell ? './index.html' : null, async ()=>{
+      if(!isShell) return null;              // no stored copy to fall back on
       const c = await caches.open(CACHE);
-      return (await c.match('./index.html')) || (await c.match('./')) || Response.error();
-    })());
+      return (await c.match('./index.html')) || (await c.match('./'));
+    });
     return;
   }
 
-  // icons and the manifest: serve from cache, refresh in the background
+  if(/\.(css|js)$/.test(url.pathname)){
+    revalidating(req.url, async ()=> (await caches.open(CACHE)).match(req));
+    return;
+  }
+
+  // icons and the manifest: they change with the app, not between deploys, so
+  // serve from cache and refresh in the background
   e.respondWith((async ()=>{
     const c = await caches.open(CACHE);
     const hit = await c.match(req);
