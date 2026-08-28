@@ -1770,8 +1770,20 @@ let micStream=null, micSrc=null;
 async function ensureAudio(){
   try{
     if(!micStream){
+      /* All three off, deliberately. Asking for echo cancellation, noise
+         suppression or gain control makes WebKit open the voice-processing audio
+         unit, and that unit brings the telephone call with it: iOS moves the
+         whole session to the earpiece the instant the microphone is granted, and
+         leaves it there. Everything the app says then sounds like a phone call.
+
+         Turning them off costs nothing here. This stream feeds the level meter
+         and nothing else — speech recognition captures separately, through
+         settings this app cannot reach, so what the recognizer hears is
+         unaffected. And echo cancellation would be redundant anyway: the app is
+         half-duplex, gating the microphone while it speaks and discarding the
+         transcript afterwards. */
       micStream = await navigator.mediaDevices.getUserMedia({audio:{
-        echoCancellation:true, noiseSuppression:true, autoGainControl:true
+        echoCancellation:false, noiseSuppression:false, autoGainControl:false
       }});
       micSrc = null;   // any earlier source node belongs to a stream that is gone
     }
