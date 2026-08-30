@@ -285,10 +285,14 @@ function setIcons(){
 }
 
 /* ================= normalization ================= */
+/* Everything that is not a letter or a digit goes. The old list of punctuation
+   marks was a list to forget something from — asterisks and slashes were not on
+   it, so a row of them survived as a "word" no child could ever say. Letters
+   means letters in any alphabet, so å, ä, ö and anything accented are kept, and
+   an emoji dropped into a text normalises to nothing and is passed over like the
+   punctuation it stands in for. */
 function norm(w){
-  return w.toLowerCase()
-    .replace(/[.,!?;:"'“”„»«…\-–—()]/g,'')
-    .trim();
+  return w.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
 }
 function tokens(str){
   return str.split(/\s+/).map(norm).filter(Boolean);
@@ -510,6 +514,10 @@ function loadLine(){
     raw:w, norm:norm(w), state:'coming'
   }));
   S.pos = 0;
+  while(S.pos < S.words.length && isVoid(S.words[S.pos])){
+    S.words[S.pos].state = 'done';
+    S.pos++;
+  }
   S.posSince = performance.now();
   S.lastMiscueKey = '';
   resetTranscript();
@@ -679,11 +687,31 @@ function setHint(txt, warm){
    further back could lock the cursor for the rest of the sentence. Now settled
    words stay fixed, and only the not-yet-consumed hypothesis tokens are tried
    against the words from the cursor onward. */
+/* A token that normalises to nothing — a lone dash, an ellipsis, a stray quote —
+   is punctuation that happened to have spaces around it, not a word anyone can
+   read aloud. It can never be matched, so the cursor used to sit on it: on the
+   strict setting, where nothing may be skipped, for ever. Passing them is not a
+   concession; there is nothing there to say. */
+const isVoid = w => !w.norm;
+
+/* A line with nothing readable in it — a lone dash, a row of asterisks, a stray
+   quotation mark — leaves the cursor past the last word with nothing able to
+   move it: the help timer stands down at the end of a line, and only a match can
+   finish one. The session would sit there for ever, looking alive. So such lines
+   are dropped where text enters and the state never arises. */
+const readableLines = arr =>
+  arr.map(x => x.trim())
+     .filter(x => x && x.split(/\s+/).some(w => norm(w)));
+
 function align(hypTokens, fromWord, fromTok){
   let i=fromWord, j=fromTok;
   const states = S.words.map(w=>w.state);
   const miscues = [];
   const rule = STRICTNESS[S.strict];
+  const passVoid = ()=>{
+    while(i < S.words.length && isVoid(S.words[i])){ states[i]='done'; i++; }
+  };
+  passVoid();
 
   // How many words may be passed over in total during this pass. Zero until
   // the cursor has rested long enough. The budget is consumed, otherwise
@@ -696,15 +724,20 @@ function align(hypTokens, fromWord, fromTok){
 
     if(matches(h, S.words[i].norm)){
       states[i]='done'; i++; j++; consumed=j;
+      passVoid();
       continue;
     }
 
     let jumped = false;
-    for(let k=1; k<=budget && i+k < S.words.length; k++){
+    /* Void words between here and the target are free — they were never
+       something the child failed to read. */
+    const cost = k =>{ let c = 0; for(let m=0;m<k;m++) if(!isVoid(S.words[i+m])) c++; return c; };
+    for(let k=1; i+k < S.words.length && cost(k) <= budget; k++){
       if(matches(h, S.words[i+k].norm)){
-        for(let m=0;m<k;m++){ states[i]='skipped'; i++; }
+        for(let m=0;m<k;m++){ states[i] = isVoid(S.words[i]) ? 'done' : 'skipped'; i++; }
         states[i]='done'; i++; j++; consumed=j;
-        budget -= k;
+        budget -= cost(k);
+        passVoid();
         jumped = true; break;
       }
     }
@@ -793,7 +826,11 @@ function applyAlign(hypTokens, isFinal=false){
 }
 
 function noteHard(word){
-  const k = word.toLowerCase();
+  const k = norm(word);
+  /* Nothing readable is nothing to practise. Older profiles can hold such
+     entries from before void words were passed over, and a review line built
+     from one would hang the same way. */
+  if(!k) return;
   S.hard.set(k, (S.hard.get(k)||0) + 1);
   $('roHard').textContent = S.hard.size;
 
@@ -812,6 +849,7 @@ function noteHard(word){
 
 function hardList(n){
   return [...S.hard.entries()]
+    .filter(e => norm(e[0]))
     .sort((a,b)=>b[1]-a[1])
     .slice(0,n)
     .map(e=>e[0]);
@@ -1622,8 +1660,20 @@ async function start(){
   }
 }
 
+/* Silence both engines and retire the current turn. A cancelled utterance's end
+   event may never arrive, and the half-duplex gate it was going to lift would
+   then keep the microphone shut for the rest of the session. */
+function hush(){
+  if(window.speechSynthesis) speechSynthesis.cancel();
+  try{ piperPlayer.pause(); }catch(e){}
+  S.speakSeq++;
+  clearTimeout(S.speakTimer);
+  S.speaking = false;
+}
+
 function stop(){
   S.running=false;
+  hush();          // pausing must stop the voice too, mid-word if need be
   unwatchRecognition();
   clearTimeout(recDeafTimer);
   bankTime();      // before remember(), so the profile total includes this stretch
@@ -1695,7 +1745,7 @@ function markActivePreset(){
    an error — would throw the reading position back to the first sentence and
    silently abort a hard-word review. */
 function applyText(){
-  const lines = $('txt').value.split('\n').map(s=>s.trim()).filter(Boolean);
+  const lines = readableLines($('txt').value.split('\n'));
   if(!lines.length) return;
   const same = S.reviewing
     ? (S.source && lines.join('\n') === S.source.join('\n'))
@@ -2185,7 +2235,7 @@ function applyProfile(p){
   S.score = p.score; S.misses = 0; S.lats = [];
   $('roLat').textContent = '–'; $('roMed').textContent = '–';
 
-  const lines = p.text.split('\n').map(x=>x.trim()).filter(Boolean);
+  const lines = readableLines(p.text.split('\n'));
   S.lines = lines.length ? lines : PRESETS['Meningar'].slice();
   S.line  = Math.min(p.line, S.lines.length-1);
   $('txt').value = S.lines.join('\n');
@@ -2561,11 +2611,7 @@ const goAway = ()=>{
   /* A cancelled utterance's onend may never arrive from a frozen page, and the
      half-duplex gate it was going to lift would then keep the microphone muted
      for the rest of the session. Retire the turn by hand. */
-  if(window.speechSynthesis) speechSynthesis.cancel();
-  try{ piperPlayer.pause(); }catch(e){}
-  S.speakSeq++;
-  clearTimeout(S.speakTimer);
-  S.speaking = false;
+  hush();
   flush();
 };
 window.addEventListener('pagehide', goAway);

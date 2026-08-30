@@ -31,6 +31,7 @@ Origin Private File System behövs — headless WebKit har ingen av dem.
 | `fallback.mjs` | Faller appen tillbaka på systemrösten när den neurala fallerar? |
 | `mic.mjs` | Får mikrofonspåret rätt inställningar, och rör sig nivåmätaren? |
 | `offline.mjs` | Startar appen utan nät, med koden i separata filer? |
+| `text.mjs` | Text som inte är ord: ensamma skiljetecken, rader utan något läsbart, tecken ingen kan säga. Och att paus tystar rösten. |
 | `fuzz.mjs` | Hundratals slumpade klick och tangenttryck. Bryts någon invariant? `node fuzz.mjs <seed> <steg>` |
 
 ## Att skriva ett nytt
