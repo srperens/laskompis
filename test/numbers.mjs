@@ -40,6 +40,26 @@ const cases = [
   ['de','b',false], ['katten','k',false], ['k','katten',false],
   ['de','de',true], ['d','d',true],
 
+  // homofoner: samma ljud, olika stavning
+  ['hann','han',true], ['han','hann',true],
+  ['fann','fan',true], ['vann','van',true], ['vet','vett',true],
+  // men aldrig ord som bara liknar
+  ['vann','vann',true], ['van','hann',false],
+
+  // och/att/å reduceras alla till samma ljud
+  ['och','å',true], ['att','å',true], ['och','att',true], ['ock','och',true],
+  ['och','o',false],
+
+  // jag/ja, vad/va, med/me
+  ['jag','ja',true], ['vad','va',true], ['med','me',true],
+  ['jag','vad',false],
+
+  // grupper som delar ett ord men INTE ska slås ihop
+  ['det','de',true], ['de','dom',true], ['dem','dom',true],
+  ['det','dom',false],
+  // de och dem sägs båda "dom" — de hör ihop, det gör inte det
+  ['de','dem',true], ['dem','de',true],
+
   // talade former av skrivna ord
   ['det','de',true], ['de','dom',true], ['dem','dom',true],
   ['mig','mej',true], ['dig','dej',true], ['sig','sej',true],
@@ -58,7 +78,12 @@ const cases = [
    korta ord, och "släpper igenom nästan allt" är hela poängen med läget. Dessa
    krävs bara av normal och sträng. */
 const STRIKTA = [
-  ['dem','de',false], ['sin','sen',false], ['ser','får',false],
+  ['sin','sen',false], ['ser','får',false],
+  /* Mild har en teckens budget även för korta ord, så där matchar han mot hon.
+     Det är vad "släpper igenom nästan allt" betyder, och det prövas därför bara
+     på de strängare nivåerna. */
+  ['ja','va',false], ['dem','det',false],
+  ['hann','hon',false], ['han','hon',false], ['hon','han',false],
   ['han','hon',false], ['hon','han',false], ['d','c',false],
 ];
 

@@ -368,31 +368,68 @@ const sameLetter = (a, b) =>
   (a.length === 1 && LETTER_NAME[a] === b) ||
   (b.length === 1 && LETTER_NAME[b] === a);
 
-/* The other half of the same problem: words Swedish spells one way and says
-   another. A child reading "det" says "de", and the recognizer writes what it
-   heard. Accepting these is not tolerance — the reading was correct, and the
-   spelling difference is the language's, not the child's. Kept to the pairs that
-   are simply how the word is said, never to near-misses. */
-const SPOKEN = {
-  det:'de', de:'dom', dem:'dom', är:'e',
-  mig:'mej', dig:'dej', sig:'sej',
-  någon:'nån', något:'nåt', några:'nåra',
-  sådan:'sån', sådant:'sånt', sådana:'såna',
-  säga:'säja', sade:'sa', mycket:'mycke'
-};
-const saidAloud = (a, b) => SPOKEN[a] === b || SPOKEN[b] === a;
+/* Words that cannot be told apart from the one actually read. Three causes, one
+   consequence:
 
-/* Substitutions the recognizer makes on its own, where the language model
-   prefers a common word over the rare one actually read. "säg" is uncommon and
-   "sig" is everywhere, so a child reading "säg" is handed back "sig" every time
-   — and a word that can never be got past is worse than one that is occasionally
-   let through too easily. Only for pairs that fail systematically, not for
-   anything that merely sounds close; a child reading "hon" for "han" must still
-   be corrected. */
-const HEARD_AS = {
-  'säg': 'sig'
-};
-const heardAs = (a, b) => HEARD_AS[a] === b || HEARD_AS[b] === a;
+     "hann" and "han" are the same sound. So are "vann" and "van", "fann" and
+     "fan". The difference is one of spelling, and nothing in the audio carries
+     it — no recogniser can hear which was meant, and neither can a person.
+
+     Swedish says a good many words differently from how it writes them. A child
+     reading "det" says "de", "jag" comes out "ja", "och" and "att" both reduce
+     to "å". The recogniser writes what it heard, which is the truth.
+
+     And where two readings are close, the language model picks the commoner
+     word: "säg" is handed back as "sig" every time.
+
+   In all three the child read correctly, so the app must not say otherwise. For
+   an app that listens to reading aloud this is not a loosening of standards — it
+   is the standard. Reading aloud means producing the right sound, and these
+   produce the same sound. Which of two identically-pronounced spellings was
+   meant is a question for writing practice, not for a microphone.
+
+   Groups are not merged transitively, and that matters: "det" is said "de" and
+   "de" is said "dom", but "det" is not "dom", so those stay two groups sharing a
+   word rather than becoming one. A pair matches when some single group holds
+   both. */
+const HOMOPHONE_GROUPS = [
+  /* Same sound, different spelling. */
+  ['han','hann'], ['fann','fan'], ['vann','van'], ['vet','vett'],
+  ['sett','set'], ['glad','glatt'],
+
+  /* Said differently from how it is written. */
+  ['jag','ja'], ['vad','va'], ['med','me'], ['är','e'],
+  ['det','de'], ['de','dem','dom'],
+  ['och','å','ock','att'],
+  ['mig','mej'], ['dig','dej'], ['sig','sej'],
+  ['säga','säja'], ['sade','sa'], ['sagt','sakt'],
+  ['mycket','mycke'], ['ska','skall'], ['sedan','sen'],
+  ['någon','nån'], ['något','nåt'], ['några','nåra'], ['någonting','nånting'],
+  ['sådan','sån'], ['sådant','sånt'], ['sådana','såna'],
+  ['ned','ner'], ['god','go'], ['gjorde','jorde'], ['gjort','jort'],
+  ['staden','stan'], ['dagen','dan'], ['morgon','morron'],
+
+  /* The language model reaching for the commoner word. */
+  ['säg','sig']
+];
+
+/* Word to the groups holding it — a word may sit in more than one. */
+const HOMOPHONE_OF = (()=>{
+  const m = new Map();
+  HOMOPHONE_GROUPS.forEach((group, i) => group.forEach(w =>{
+    if(!m.has(w)) m.set(w, []);
+    m.get(w).push(i);
+  }));
+  return m;
+})();
+
+function sameSound(a, b){
+  const ga = HOMOPHONE_OF.get(a);
+  if(!ga) return false;
+  const gb = HOMOPHONE_OF.get(b);
+  if(!gb) return false;
+  return ga.some(i => gb.indexOf(i) !== -1);
+}
 
 function numOf(t){
   if(isDigits(t)) return parseInt(t, 10);
@@ -438,7 +475,7 @@ function matches(hyp, ref){
     const hn = numOf(hyp), rn = numOf(ref);
     return hn !== null && rn !== null && hn === rn;
   }
-  if(sameLetter(hyp, ref) || saidAloud(hyp, ref) || heardAs(hyp, ref)) return true;
+  if(sameLetter(hyp, ref) || sameSound(hyp, ref)) return true;
   const rule = STRICTNESS[S.strict];
   if(rule.first && ref.length >= 4 && hyp[0] !== ref[0]) return false;
   // large length difference = different word, not a pronunciation variant
