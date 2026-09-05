@@ -156,6 +156,7 @@ const S = {
   posSince: 0,
   hypConsumed: 0,
   hypLen: 0,        // tokens seen so far in this session — what a mute consumes up to
+  echo: [],         // what the app has said and not yet heard come back
   lastRescue: 0,
   sndOk: false,
   sndFail: false,
@@ -485,6 +486,46 @@ function matches(hyp, ref){
   // large length difference = different word, not a pronunciation variant
   if(Math.abs(hyp.length - ref.length) > rule.budget(ref.length)) return false;
   return lev(hyp, ref) <= rule.budget(ref.length);
+}
+
+/* ================= the app's own voice ================= */
+/* The recognizer hears the loudspeaker. Nothing can be done about that from a
+   web page: recognition captures through settings this app cannot reach, so
+   there is no echo cancellation to ask for, and the result carries no hint of
+   when the audio behind it was recorded.
+
+   Gating on a stopwatch therefore cannot work, and that is what kept failing.
+   WebKit does not deliver as it hears — it sits on the audio and hands over a
+   final result seconds later, long after any discard window has closed. The
+   app's own help word then arrived looking exactly like the child reading it,
+   and moved the cursor.
+
+   So the app remembers what it said and drops those tokens as they come back,
+   by content instead of by clock. Per occurrence, not as a rule: the help word
+   is the very word the child is meant to read next, and dropping one echo of
+   "fönstret" must still leave the child's own "fönstret" to be heard and
+   scored. */
+const ECHO_TTL = 8000;   // a word the recognizer never made out must not suppress the child for ever
+
+function noteEcho(text){
+  const t = tokens(text);
+  if(t.length) S.echo.push({ toks:t, at: performance.now() });
+}
+
+/* Drop the app's own words from the front of what is new. Only a leading run:
+   the moment something arrives that the app did not say, the child is talking
+   and the rest must be aligned normally. */
+function dropEcho(toks){
+  const now = performance.now();
+  while(S.echo.length && now - S.echo[0].at > ECHO_TTL) S.echo.shift();
+  if(S.hypConsumed > toks.length) S.hypConsumed = toks.length;
+  while(S.echo.length && S.hypConsumed < toks.length){
+    const head = S.echo[0];
+    if(!matches(toks[S.hypConsumed], head.toks[0])) break;
+    S.hypConsumed++;
+    head.toks.shift();
+    if(!head.toks.length) S.echo.shift();
+  }
 }
 
 /* ================= sentence ================= */
@@ -991,6 +1032,7 @@ function speak(text, kind='word'){
    the rest of the session. */
 function beginTurn(text){
   S.speaking = true;
+  noteEcho(text);
   const myTurn = ++S.speakSeq;
   const release = ()=>{
     if(S.speakSeq !== myTurn) return;
@@ -1384,6 +1426,7 @@ function releaseAudio(){
   S.ignoreUntil = performance.now() + 1200;
   S.hypConsumed = 0;
   S.hypLen = 0;
+  S.echo.length = 0;
   if(rafId){ cancelAnimationFrame(rafId); rafId = null; }
   if(micSrc){ try{ micSrc.disconnect(); }catch(e){} micSrc = null; }
   if(micStream){
@@ -1477,14 +1520,15 @@ function buildRecognizer(){
     for(let i=0;i<ev.results.length;i++) full += ev.results[i][0].transcript+' ';
     const toks = tokens(full);
     S.hypLen = toks.length;
-    /* Muted: the app is speaking, or a discard window is running. What is
-       heard now is the app's own voice, or the tail of something already
-       handled — consume it on arrival, so it can never be aligned later. The
-       session itself keeps running; this is the whole mute. */
-    if(S.speaking || performance.now() < S.ignoreUntil){
-      S.hypConsumed = toks.length;
-      return;
-    }
+    /* The app's own voice, whenever it happens to be delivered. This is the
+       real defence — see dropEcho — and it does not depend on when the
+       recognizer chooses to hand the words over. */
+    dropEcho(toks);
+    /* Muted: the app is speaking, or a discard window is running. Hold off on
+       aligning, but do not swallow the list: what the child says here is still
+       theirs, and it is aligned as soon as the window closes. Swallowing it
+       wholesale is what left the app looking deaf. */
+    if(S.speaking || performance.now() < S.ignoreUntil) return;
     $('roHyp').textContent = full.trim().slice(-70) || '—';
     /* A single event can carry a finalized result followed by a fresh interim
        one. Looking only at the last result would classify the whole event as
