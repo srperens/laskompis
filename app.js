@@ -622,6 +622,9 @@ function startClock(){
   clearInterval(S.clockTimer);
   S.clockTimer = setInterval(()=>{
     renderClock();
+    /* iOS parks the synthesizer in a paused state now and then, and utterances
+       then queue in silence. resume() is a cheap no-op everywhere else. */
+    if(window.speechSynthesis && S.speaking) speechSynthesis.resume();
     if(!S.running || !S.target) return;
     if(elapsedMs() >= S.target) finishStretch();
   }, 500);
@@ -985,9 +988,12 @@ function speak(text, kind='word'){
   };
   if(PAUSE_REC_TO_SPEAK && S.running && rec){
     /* Claimed ahead of beginTurn, so nothing — onend's restart above all —
-       grabs the microphone back during the beat below. */
+       grabs the microphone back during the beat below. abort() rather than
+       stop(): stop keeps the session busy finalizing what it heard, and the
+       microphone must be genuinely free before the word plays. The transcript
+       is discarded anyway. */
     S.speaking = true;
-    try{ rec.stop(); }catch(e){}
+    try{ rec.abort(); }catch(e){}
     setTimeout(go, 250);
     return;
   }
@@ -1025,7 +1031,12 @@ function beginTurn(text){
     armHoldoff();
   };
   clearTimeout(S.speakTimer);
-  S.speakTimer = setTimeout(release, Math.min(15000, 1200 + text.length*120));
+  S.speakTimer = setTimeout(()=>{
+    /* The engine never reported back — the panel must say so, or a word that
+       silently never sounded is indistinguishable from one that played. */
+    noteTts('vakthund');
+    release();
+  }, Math.min(15000, 1200 + text.length*120));
   return release;
 }
 
@@ -1045,8 +1056,10 @@ function speakSystem(text, rate){
      that is what makes it the fallback. */
   if(S.voice) u.voice = S.voice;
   const release = beginTurn(text);
-  u.onend = release;
-  u.onerror = release;
+  noteTts('köad');
+  u.onstart = ()=> noteTts('talar');
+  u.onend = ()=>{ noteTts('klar'); release(); };
+  u.onerror = e=>{ noteTts('fel: ' + (e && e.error || '?')); release(); };
   speechSynthesis.speak(u);
   // iOS sometimes leaves the synthesizer paused; resume() is a no-op elsewhere
   speechSynthesis.resume();
@@ -1121,8 +1134,8 @@ piperPlayer.setAttribute('playsinline', '');
 piperPlayer.preload = 'auto';
 
 
-piperPlayer.addEventListener('ended', ()=>{ if(piper.release) piper.release(); });
-piperPlayer.addEventListener('error', ()=>{ if(piper.release) piper.release(); });
+piperPlayer.addEventListener('ended', ()=>{ noteTts('klar'); if(piper.release) piper.release(); });
+piperPlayer.addEventListener('error', ()=>{ noteTts('fel: media'); if(piper.release) piper.release(); });
 
 /* A tenth of a second of 8-bit silence, built rather than embedded. */
 function silentWav(ms = 100, rate = 8000){
@@ -1153,6 +1166,46 @@ function piperUnlock(){
        the unlock still counted. Anything else means the gesture was gone. */
     e =>{ if(e && e.name === 'AbortError') piper.unlocked = true; }
   );
+}
+
+/* iOS is reluctant to sound anything no gesture just asked for: an utterance
+   queued from a timer — the help word, the praise — can sit in the queue and
+   never start, and once recognition has captured, the page's audio session can
+   be parked where playback is inaudible. Both share one escape hatch: a page
+   that is already playing is allowed to keep sounding. So while a reading
+   session runs, a playback session is held open — a loop of silence through a
+   media element unlocked inside the start gesture. It carries no sound and
+   costs nothing; it exists so the help words that follow have a live playback
+   session to land in. */
+const ttsKeeper = new Audio();
+ttsKeeper.setAttribute('playsinline', '');
+ttsKeeper.loop = true;
+let keeperOffTimer = null;
+
+function keepAliveOn(){
+  clearTimeout(keeperOffTimer);
+  if(detectOS() !== 'ios' || !window.URL) return;
+  if(!ttsKeeper.src) ttsKeeper.src = URL.createObjectURL(silentWav(1000));
+  ttsKeeper.play().catch(()=>{});
+}
+
+/* Pausing lags a few seconds: stop() is often followed by a spoken line —
+   "time is up", the goodbye of a finished stretch — and killing the playback
+   session first would swallow exactly those. Leaving the page shuts it down
+   at once; silence must not keep a backgrounded tab alive. */
+function keepAliveOff(now){
+  clearTimeout(keeperOffTimer);
+  if(now){ try{ ttsKeeper.pause(); }catch(e){} return; }
+  keeperOffTimer = setTimeout(()=>{ try{ ttsKeeper.pause(); }catch(e){} }, 6000);
+}
+
+/* What the synthesizer last did, shown in the adult's panel. On a phone there
+   is no console, and "the word was queued but never started" versus "it played
+   to the end without a sound coming out" is the difference between two
+   entirely different iOS failures. */
+function noteTts(msg){
+  const el = $('roTts');
+  if(el) el.textContent = msg;
 }
 
 function piperNote(msg){
@@ -1267,6 +1320,7 @@ function speakPiper(text, rate){
   const myTurn = S.speakSeq;                  // beginTurn just claimed this one
   piper.release = release;
   try{ piperPlayer.pause(); }catch(err){}
+  noteTts('syntetiserar');
   (async ()=>{
     const blob = await session.predict(text);
     /* The turn counter, not piper.release: a newer turn may belong to the system
@@ -1288,6 +1342,7 @@ function speakPiper(text, rate){
     piperPlayer.src = piper.url;
     piperPlayer.playbackRate = rate;
     await piperPlayer.play();
+    noteTts('spelar');
   })().catch(e =>{
     /* Assigning a new source rejects the previous play() with AbortError. The
        app interrupts itself constantly — a word cutting off the encouragement
@@ -1692,6 +1747,7 @@ async function start(){
   S.starting = true;
   try{
     piperUnlock();   // synchronously, while the tap is still ours
+    keepAliveOn();   // likewise — the playback session must be born in the gesture
     /* Speak BEFORE any await: iOS home-screen web apps (standalone mode) only
        allow the first speechSynthesis.speak() synchronously inside the user
        gesture — after awaiting the microphone it is silently blocked. */
@@ -1736,6 +1792,7 @@ function hush(){
 function stop(){
   S.running=false;
   hush();          // pausing must stop the voice too, mid-word if need be
+  keepAliveOff();  // lags a few seconds, so the goodbye line still has a session
   unwatchRecognition();
   clearTimeout(recDeafTimer);
   bankTime();      // before remember(), so the profile total includes this stretch
@@ -2669,6 +2726,7 @@ const flush = ()=>{
    getUserMedia and the first speak() through from inside one). */
 const goAway = ()=>{
   if(S.running) stop();          // banks the time and writes the profile
+  keepAliveOff(true);            // at once — silence must not keep a hidden tab alive
   releaseAudio();
   /* A cancelled utterance's onend may never arrive from a frozen page, and the
      half-duplex gate it was going to lift would then keep the microphone muted
