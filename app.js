@@ -140,10 +140,9 @@ const S = {
   strict: 'normal',
   hard: new Map(),
   reviewing: false,
-  /* A deadline, not a latch. Its job is to discard the tail of the session we
-     just stopped, and those arrive within milliseconds. As a boolean cleared
-     only by onstart, a single dropped event left the app deaf for the rest of
-     the session — looking perfectly alive the whole time. */
+  /* A deadline, not a latch. While it runs, everything the recognizer delivers
+     is consumed on arrival instead of aligned — a mute, not a teardown. It
+     expires on its own, so a dropped event can never leave the app deaf. */
   ignoreUntil: 0,
   recLive: false,
   recSeenAt: 0,     // last sign of life from the recognizer
@@ -156,6 +155,7 @@ const S = {
   meter: true,
   posSince: 0,
   hypConsumed: 0,
+  hypLen: 0,        // tokens seen so far in this session — what a mute consumes up to
   lastRescue: 0,
   sndOk: false,
   sndFail: false,
@@ -488,24 +488,25 @@ function matches(hyp, ref){
 }
 
 /* ================= sentence ================= */
-/* The recognizer accumulates results across the whole session. On a sentence
-   change that list must be cleared, or old speech gets matched against the new
-   sentence — common short words like "och" or "på" then move the cursor without
-   anyone having said anything. The only reliable way to clear it is to restart
-   the session. */
+/* The recognizer accumulates results across the whole session, and it hears the
+   app's own voice. Without a cut, old speech — or the help word the app just
+   said — gets matched against the sentence, and common short words like "och"
+   or "på" then move the cursor without anyone having said anything.
+
+   The cut used to be a session restart: stop(), wait for onend, start again.
+   That was heavy and fragile — the app was deaf through the whole handover, and
+   a single dropped event left it deaf for good. So the session is now left
+   running and the transcript is muted instead: everything heard so far is
+   consumed (the alignment anchor moves past it, so it can never be matched),
+   and a short discard window swallows what is still in flight — audio the
+   recognizer has heard but not yet delivered. */
 function resetTranscript(){
   S.onsetAt = null;
-  S.hypConsumed = 0;
   wasLoud = false;
+  S.hypConsumed = S.hypLen;
+  S.ignoreUntil = performance.now() + 1200;
   $('roHyp').textContent = '—';
   $('roHeard').textContent = '—';
-  if(!S.running || !rec) return;
-  /* Only stop() a session that is actually live: stopping an already-stopped
-     recognizer fires no onend, so nothing would restart it and the latch below
-     would never be released — leaving the app deaf while it looks live. */
-  if(!S.recLive){ resetRecognition(); return; }
-  S.ignoreUntil = performance.now() + 1200;   // drop the old session's tail
-  try{ rec.stop(); }catch(e){}       // onend restarts, onstart releases the latch
 }
 
 function loadLine(){
@@ -976,8 +977,10 @@ function speak(text, kind='word'){
    Dropping onresult events while speaking is not enough: the recognizer keeps
    transcribing our own TTS into its cumulative result list, and those tokens
    would be aligned the moment the gate lifts — letting the help feature score
-   the word by saying it itself. Throwing the transcript away afterwards is the
-   only reliable way to discard what the app said.
+   the word by saying it itself. So everything heard while speaking is consumed
+   as it arrives, and the release below mutes a moment longer for the tail the
+   recognizer has heard but not yet delivered. The session itself is never
+   restarted for this — see resetTranscript.
 
    Each utterance owns the shared speaking state only for its own turn. A
    cancelled utterance's end event arrives after the next one has already
@@ -1361,6 +1364,7 @@ function releaseAudio(){
   S.recLive = false;
   S.ignoreUntil = performance.now() + 1200;
   S.hypConsumed = 0;
+  S.hypLen = 0;
   if(rafId){ cancelAnimationFrame(rafId); rafId = null; }
   if(micSrc){ try{ micSrc.disconnect(); }catch(e){} micSrc = null; }
   if(micStream){
@@ -1401,9 +1405,9 @@ function tick(){
   wasLoud = loud;
 
   // Safety net: if the child is clearly reading but the cursor has been
-  // still for a long time, the recognizer session has probably ended up in a
-  // state we can't untangle. Clear the transcript and start over from the
-  // current word — the position is kept.
+  // still for a long time, the accumulated transcript has probably wedged the
+  // alignment. Discard it and start fresh from the current word — the position
+  // is kept. A session that has actually died is the supervisor's job.
   const now = performance.now();
   if(S.running && !S.speaking && loud
      && now - S.posSince > S.holdoff * 2
@@ -1431,10 +1435,11 @@ function buildRecognizer(){
   r.maxAlternatives=1;
 
   /* Three ways in, because onstart is droppable and it used to be the only one
-     that lifted the latch and marked the session live. Any of them proves a
-     session is running. */
+     that marked the session live. Any of them proves a session is running.
+     None of them touches ignoreUntil: the discard window is a deadline that
+     expires on its own, and onspeechstart can fire mid-session on the very
+     speech the window exists to discard. */
   const markLive = ()=>{
-    S.ignoreUntil = 0;
     if(!S.recLive) S.recStarts++;
     S.recLive = true;
     S.recSeenAt = performance.now();
@@ -1443,15 +1448,24 @@ function buildRecognizer(){
   /* Every new session has an empty result list, so the token anchor must be
      reset — but only here, where a session genuinely begins. applyAlign clamps
      it if this event never arrives. */
-  r.onstart = ()=>{ S.hypConsumed = 0; markLive(); };
+  r.onstart = ()=>{ S.hypConsumed = 0; S.hypLen = 0; markLive(); };
   r.onaudiostart = markLive;
   r.onspeechstart = markLive;
 
   r.onresult = ev=>{
     S.recSeenAt = performance.now();   // results are the best proof of all
-    if(S.speaking || performance.now() < S.ignoreUntil) return;
     let full='';
     for(let i=0;i<ev.results.length;i++) full += ev.results[i][0].transcript+' ';
+    const toks = tokens(full);
+    S.hypLen = toks.length;
+    /* Muted: the app is speaking, or a discard window is running. What is
+       heard now is the app's own voice, or the tail of something already
+       handled — consume it on arrival, so it can never be aligned later. The
+       session itself keeps running; this is the whole mute. */
+    if(S.speaking || performance.now() < S.ignoreUntil){
+      S.hypConsumed = toks.length;
+      return;
+    }
     $('roHyp').textContent = full.trim().slice(-70) || '—';
     /* A single event can carry a finalized result followed by a fresh interim
        one. Looking only at the last result would classify the whole event as
@@ -1461,17 +1475,19 @@ function buildRecognizer(){
     for(let i=ev.resultIndex; i<ev.results.length; i++){
       if(ev.results[i].isFinal){ anyFinal = true; break; }
     }
-    applyAlign(tokens(full), anyFinal);
+    applyAlign(toks, anyFinal);
   };
-  /* Deliberately does not touch recSeenAt: an error is the opposite of a sign
-     of life, and refreshing it would keep the supervisor quiet through an error
-     storm. */
+  /* Only no-speech refreshes recSeenAt: it is the recognizer saying "I am
+     running, nobody talked", which a silent room produces regularly, and
+     without it the supervisor would cycle a perfectly healthy session. Every
+     other error is the opposite of a sign of life, and refreshing on those
+     would keep the supervisor quiet through an error storm. */
   r.onerror = ev=>{
     if(ev.error==='not-allowed' || ev.error==='service-not-allowed'){
       showErr('Mikrofonen blockerades. Tillåt åtkomst och försök igen.');
       return;
     }
-    if(ev.error==='no-speech') return;
+    if(ev.error==='no-speech'){ S.recSeenAt = performance.now(); return; }
     /* The microphone can be taken away mid-session — a call arriving, another
        app claiming it. That session is over and no onend need follow, so mark it
        dead and let the supervisor rebuild instead of sitting there looking
@@ -1535,12 +1551,18 @@ function watchRecognition(){
        to nudge and rebuild for ever, renegotiating the audio session every time.
        That is not a hypothetical: it is what broke listening on iOS while macOS
        was fine. So the signal is only trusted once it has been seen to work at
-       least once. Where it never arrives, the app is left alone; the help timer
-       still heals a wedged recognizer, just more slowly. */
+       least once. Where it never arrives, the app is left alone, and the manual
+       restart button remains the way back. */
     if(!S.recStarts) return;
     const now = performance.now();
-    if(S.recLive){ S.recSeenAt = now; return; }
-    if(now - S.recSeenAt < 8000) return;
+    /* recLive is a claim, not proof: onend is droppable, and a session that
+       died without one used to look live for ever — the supervisor refreshed
+       the liveness clock from the flag and never stepped in, which is exactly
+       the deafness it exists to end. So the clock is only refreshed by real
+       events, and the flag merely buys a longer grace: a healthy session shows
+       some sign of life — results, silence-cycling, a no-speech error — well
+       inside twenty seconds. */
+    if(now - S.recSeenAt < (S.recLive ? 20000 : 8000)) return;
 
     /* Two steps, and the order matters more than it looks. Rebuilding the
        recognizer starts a new capture, and on iOS a new capture renegotiates the
@@ -1583,21 +1605,25 @@ function resetRecognition(){
   }
   S.onsetAt = null;
   S.hypConsumed = 0;
+  S.hypLen = 0;
   wasLoud = false;
   $('roHyp').textContent = '—';
   $('roHeard').textContent = '—';
   if(!S.running) return;
   rec = buildRecognizer();
   if(!rec) return;
-  /* The old session may still be closing, so retry — and if these run out, the
-     supervisor comes back around. It used to end here, silently, with the latch
-     still set and the app deaf for the rest of the session. */
-  const tryStart = n=>{
-    if(!S.running || !rec) return;
-    try{ rec.start(); }catch(e){ if(n>0) setTimeout(()=>tryStart(n-1), 200); }
-  };
-  tryStart(10);
+  startRec(10);
   armHoldoff();
+}
+
+/* The previous session may still be closing, in which case start() throws —
+   retry a few times rather than swallowing the one attempt. If these run out,
+   the supervisor comes back around; it used to end silently here, with the app
+   deaf for the rest of the session. */
+function startRec(tries){
+  if(!S.running || !rec) return;
+  try{ rec.start(); }
+  catch(e){ if(tries > 0) setTimeout(()=>startRec(tries-1), 200); }
 }
 
 /* iOS does not reliably hand a home-screen web app the speech recogniser. In
@@ -1649,7 +1675,7 @@ async function start(){
     if(S.targetDone){ S.timeMs = 0; S.targetDone = false; }
     S.runSince = performance.now();
     startClock();
-    try{ rec.start(); }catch(e){}
+    startRec(10);
     $('startBtn').classList.remove('primary');
     $('startBtn').classList.add('live');
     setIcons();

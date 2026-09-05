@@ -7,90 +7,125 @@ const b = await chromium.launch({ args:[
 const page = await (await b.newContext({ permissions:['microphone'] })).newPage();
 page.on('pageerror', e => console.log(`[pageerror] ${e.message}`));
 
+/* Talet lämnar aldrig appen ostört: sessionen ska överleva att appen pratar,
+   och dövheten framkallas här på de två sätt den uppstår i verkligheten.
+
+   Attrappen är kumulativ inom en session (se test/README.md) och levererar
+   bara resultat från en session som faktiskt lever — en död session som ändå
+   skickar onresult vore att testa en värld där dövhet inte finns. */
 await page.addInitScript(() => {
-  window.__sr = { instances: [], starts: 0, wedge: false, autoStart: true };
+  window.__sr = { instances: [], starts: 0, wedge: false };
   class FakeSR {
-    constructor(){ window.__sr.instances.push(this); this.continuous=false; }
+    constructor(){ window.__sr.instances.push(this); this.live = false; this.rows = []; }
     start(){
       if (window.__sr.wedge) return;            // returns without throwing, never begins
       window.__sr.starts++;
+      this.live = true; this.rows = [];         // a new session empties the list
       setTimeout(() => this.onstart && this.onstart(), 5);
     }
-    stop(){ setTimeout(() => this.onend && this.onend(), 5); }
+    stop(){ this.live = false; setTimeout(() => this.onend && this.onend(), 5); }
     abort(){ this.stop(); }
   }
   window.SpeechRecognition = FakeSR;
   window.webkitSpeechRecognition = FakeSR;
+  const last = () => window.__sr.instances[window.__sr.instances.length - 1];
   window.__sr.say = (text, isFinal) => {
-    const i = window.__sr.instances[window.__sr.instances.length - 1];
+    const i = last();
+    if (!i || !i.live || !i.onresult) return false;
     const r = [{ transcript: text }]; r.isFinal = !!isFinal;
-    i && i.onresult && i.onresult({ results: [r], resultIndex: 0 });
+    if (isFinal) i.rows.push(r);
+    const results = i.rows.concat(isFinal ? [] : [r]);
+    i.onresult({ results, resultIndex: results.length - 1 });
+    return true;
   };
-  window.__sr.err = (code) => {
-    const i = window.__sr.instances[window.__sr.instances.length - 1];
-    i && i.onerror && i.onerror({ error: code });
-  };
+  /* Sessionen dör som Chrome avslutar en: onend kommer, och med wedge på gör
+     varje start() ingenting — utan att kasta. */
+  window.__sr.die = () => { const i = last(); if(!i) return; i.live = false; i.onend && i.onend(); };
+  /* Det elakare dödssättet: inget onend alls. Appens flagga säger fortfarande
+     att sessionen lever, och bara tillsynens klocka kan avslöja motsatsen. */
+  window.__sr.vanish = () => { const i = last(); if(!i) return; i.live = false; };
 });
 
 await page.goto(BASE + '/index.html', { waitUntil:'load' });
 await page.waitForTimeout(1200);
-/* A long help delay on purpose: the older rescue in tick() only fires after twice
-   that, so within this test's window the supervisor is the only thing that can
-   bring recognition back. Without it the test must fail. */
-await page.evaluate(() => setHold(20000));
+/* A long help delay on purpose: within this test's window the supervisor is the
+   only thing that can bring recognition back. Without it the test must fail. */
+await page.evaluate(() => setHold(30000));
 await page.locator('#startBtn').click();
 await page.waitForFunction(() => S.running && !S.speaking, null, { timeout: 20000 });
-// wait out the deadline that discards the previous session's tail
+// wait out the discard window that swallows the intro's tail
 await page.waitForFunction(() => performance.now() >= S.ignoreUntil, null, { timeout: 10000 });
 
 const st = () => page.evaluate(() => ({
-  pos: S.pos, ord: S.words.map(w=>w.raw).join(' '),
-  recLive: S.recLive, ignoreUntil: Math.max(0, Math.round(S.ignoreUntil - performance.now())),
+  pos: S.pos, recLive: S.recLive,
+  ignoreUntil: Math.max(0, Math.round(S.ignoreUntil - performance.now())),
   speaking: S.speaking, instanser: window.__sr.instances.length, starts: window.__sr.starts
 }));
+const say = w => page.evaluate(w => window.__sr.say(w, true), w);
+const gate = () => page.waitForFunction(
+  () => S.running && !S.speaking && performance.now() >= S.ignoreUntil && S.recLive,
+  null, { timeout: 30000 });
 
+const words = await page.evaluate(() => S.words.map(w => w.raw));
 console.log('1. igång:', JSON.stringify(await st()));
+console.log('   raden:', words.join(' '));
 
 // read the first two words correctly
-const words = await page.evaluate(() => S.words.map(w => w.raw));
-console.log('   raden:', words.join(' '));
-await page.evaluate(w => window.__sr.say(w, true), words.slice(0,2).join(' '));
+await say(words.slice(0,2).join(' '));
 await page.waitForTimeout(600);
-console.log('2. efter två ord:', JSON.stringify(await st()));
+const afterTwo = await st();
+console.log('2. efter två ord:', JSON.stringify(afterTwo));
 
-// ---- the wedge: onstart never comes again, and start() does not throw ----
-console.log('\n3. framkallar låsningen (start() gör ingenting, onstart uteblir)');
-await page.evaluate(() => { window.__sr.wedge = true; });
-// force a restart the way a spoken word does
-await page.evaluate(() => resetTranscript());
-await page.waitForFunction(() => performance.now() >= S.ignoreUntil, null, { timeout: 10000 });
-console.log('   direkt efter:', JSON.stringify(await st()));
-await page.evaluate(w => window.__sr.say(w, true), words.slice(2,3).join(' '));
+/* ---- death #1: the session ends (onend arrives), every restart silently
+   fails. The retry chain runs out; only the supervisor can come back. ---- */
+console.log('\n3. sessionen dör med onend, omstarterna misslyckas tyst');
+await page.evaluate(() => { window.__sr.wedge = true; window.__sr.die(); });
+await page.waitForTimeout(1500);              // let the onend retry chain run out
+const delivered = await say(words[2]);
 await page.waitForTimeout(400);
-console.log('   ord sagt medan låst — pos ska stå still:', JSON.stringify(await st()));
+const whileDead = await st();
+console.log('   ord sagt medan döv (levererat: ' + delivered + '):', JSON.stringify(whileDead));
 
-console.log('\n4. väntar på tillsynen (upp till 12 s) …');
-const before = await page.evaluate(() => window.__sr.instances.length);
-await page.evaluate(() => { window.__sr.wedge = false; });   // the world recovers
-/* Twelve seconds, not twenty. The help timer heals this too — it speaks the
-   current word after the help delay, and that utterance's cleanup rebuilds a
-   dead recognizer — but only after a whole holdoff of silence, and that is set
-   to twenty here. Inside this window the supervisor is the only way back, so the
-   bound is the assertion: the app must come back quickly, not eventually. */
-let recovered = true;
-await page.waitForFunction(n => window.__sr.instances.length > n || S.recLive, before, { timeout: 12000 })
-  .then(()=>console.log('   kom tillbaka inom 12 s'))
-  .catch(()=>{ recovered = false; console.log('   KOM INTE TILLBAKA inom 12 s'); });
-await page.waitForTimeout(1200);
-console.log('   efter:', JSON.stringify(await st()));
+console.log('\n4. världen friskar till sig — tillsynen ska hitta tillbaka (< 14 s)');
+await page.evaluate(() => { window.__sr.wedge = false; });
+let recovered1 = true;
+await page.waitForFunction(() => S.recLive, null, { timeout: 14000 })
+  .then(()=>console.log('   kom tillbaka'))
+  .catch(()=>{ recovered1 = false; console.log('   KOM INTE TILLBAKA'); });
+await gate().catch(()=>{});
+await say(words[2]);
+await page.waitForTimeout(600);
+const afterFirst = await st();
+console.log('   läser vidare:', JSON.stringify(afterFirst));
 
-console.log('\n5. läser vidare efter återhämtningen');
-await page.evaluate(w => window.__sr.say(w, true), words.slice(0,4).join(' '));
+/* ---- death #2: no onend at all. recLive stays true, so only staleness can
+   give the death away — the supervisor must stop trusting the flag. ---- */
+console.log('\n5. sessionen försvinner utan onend — flaggan ljuger');
+await page.evaluate(() => window.__sr.vanish());
+const delivered2 = await say(words[3]);
+const stuck = await st();
+console.log('   ord sagt medan döv (levererat: ' + delivered2 + '), recLive ljuger:', JSON.stringify(stuck));
+
+console.log('\n6. väntar på tillsynen (upp till 30 s) …');
+const startsBefore = await page.evaluate(() => window.__sr.starts);
+let recovered2 = true;
+await page.waitForFunction(n => window.__sr.starts > n, startsBefore, { timeout: 30000 })
+  .then(()=>console.log('   ny session startad'))
+  .catch(()=>{ recovered2 = false; console.log('   INGEN NY SESSION'); });
+await gate().catch(()=>{});
+await say(words[3]);
 await page.waitForTimeout(600);
 const fin = await st();
+console.log('   läser vidare:', JSON.stringify(fin));
+
 /* How it came back is the app's business — a nudge to the existing recognizer is
-   the better answer and costs no audio session. That it came back, quickly, and
-   that reading continued afterwards is the property worth holding. */
-verdict(recovered && fin.recLive && fin.pos > 0,
-        `kom tillbaka inom 12 s (${recovered}), lever (${fin.recLive}), läste till ord ${fin.pos}`);
+   the better answer and costs no audio session. That it came back both times,
+   that nothing moved while it was deaf, and that reading continued afterwards
+   is the property worth holding. */
+verdict(afterTwo.pos === 2 && !delivered && whileDead.pos === 2 &&
+        recovered1 && afterFirst.pos === 3 &&
+        !delivered2 && stuck.recLive &&
+        recovered2 && fin.recLive && fin.pos === 4,
+        `stod still som döv (${whileDead.pos}===2), tillbaka efter onend-död (${recovered1}, pos ${afterFirst.pos}), ` +
+        `tillbaka efter tyst död (${recovered2}, pos ${fin.pos})`);
 await b.close();
