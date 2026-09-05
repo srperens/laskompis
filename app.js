@@ -2872,6 +2872,7 @@ const flush = ()=>{
    anyway, and coming back needs a user gesture regardless (iOS only lets
    getUserMedia and the first speak() through from inside one). */
 const goAway = ()=>{
+  logRec('sidan lämnas  kör=' + S.running + ' talar=' + S.speaking + ' live=' + S.recLive);
   if(S.running) stop();          // banks the time and writes the profile
   releaseAudio();
   /* A cancelled utterance's onend may never arrive from a frozen page, and the
@@ -2883,6 +2884,13 @@ const goAway = ()=>{
 window.addEventListener('pagehide', goAway);
 document.addEventListener('visibilitychange', ()=>{
   if(document.hidden){ goAway(); return; }
+  logRec('sidan tillbaka');
+  /* A page frozen mid-utterance may never get the end event that would have
+     lifted the half-duplex gate, and a gate stuck shut is total deafness: the
+     recogniser is rebuilt on the next press, but every result it delivers is
+     discarded as the app's own voice. goAway retires the turn on the way out;
+     this is the belt to that pair of braces, for a freeze that never ran it. */
+  if(S.speaking){ logRec('grinden satt kvar — släpper den'); hush(); }
   /* Back in the foreground: the usual reason for leaving is a trip to the
      system settings to download a voice, and Safari only reveals it to the page
      once the list is re-read. */
