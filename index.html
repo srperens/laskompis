@@ -151,7 +151,7 @@
              andra, och vilken kombination som är bäst går inte att avgöra
              någon annanstans än på en riktig telefon. Reglagen finns för att
              kunna prova det på plats i stället för att gissa. -->
-        <div class="field" id="recTuning" hidden>
+        <div class="field dbg" id="recTuning" hidden>
           <label>Taligenkänning på iPhone</label>
           <label class="check">
             <input type="checkbox" id="cbInterim">
@@ -165,7 +165,7 @@
           </label>
           <p class="vinfo">Ändringen tar effekt direkt. Startar om lyssningen.</p>
         </div>
-        <div class="field">
+        <div class="field dbg">
           <label>Händelselogg</label>
           <textarea id="recLog" readonly rows="8" spellcheck="false"
                     placeholder="Vad igenkännaren och rösten faktiskt gör, med tider. Fylls medan appen körs."></textarea>
@@ -175,6 +175,7 @@
           </div>
           <p class="vinfo">På en telefon finns ingen konsol. Det här är vad som går att skicka vidare när något beter sig konstigt.</p>
         </div>
+        <p class="vinfo" id="dbgHint"></p>
         <div class="field" id="micField" hidden>
           <label>Mikrofon</label>
           <label class="check">

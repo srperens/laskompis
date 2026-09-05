@@ -33,6 +33,7 @@ Origin Private File System behövs — headless WebKit har ingen av dem.
 | `offline.mjs` | Startar appen utan nät, med koden i separata filer? |
 | `text.mjs` | Text som inte är ord: ensamma skiljetecken, rader utan något läsbart, tecken ingen kan säga. Och att paus tystar rösten. |
 | `aterkomst.mjs` | Lämna appen och komma tillbaka: byggs en ny igenkännare, och släpps grinden? |
+| `debug.mjs` | Är diagnostiken gömd för barnet, och går den att få fram när den behövs? |
 | `echo.mjs` | Appen hör sin egen röst i mikrofonen, levererad sent. Flyttas markören av den? |
 | `mening.mjs` | Meningsbytet: töms transkriptet, och hörs barnet i den nya meningen? |
 | `iphone.mjs` | Med iPhone-user-agent: hör appen, talar den, och överlever sessionen att den pratar? |

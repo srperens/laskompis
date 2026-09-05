@@ -2281,11 +2281,41 @@ const MIC_NOTE = {
   other: 'Mätaren visar att appen hör något. Den släpps så fort du växlar bort från appen, och begärs igen när du trycker på play.'
 };
 
+/* ================= debug ================= */
+/* Diagnostiken är för den vuxna som felsöker, inte för barnet som läser, och
+   på en telefon finns ingen konsol att flytta den till. Så den finns kvar men
+   är gömd: fem tryck på versionsraden, eller #debug i adressen. Valet ligger i
+   localStorage och inte i profilen — det hör till enheten man felsöker på, inte
+   till barnet. */
+const DBG_KEY = 'laskompis.debug';
+let dbgTaps = 0, dbgTapAt = 0;
+
+function setDebug(on, säg){
+  document.body.classList.toggle('debug', !!on);
+  try{ on ? localStorage.setItem(DBG_KEY, '1') : localStorage.removeItem(DBG_KEY); }catch(e){}
+  const h = $('dbgHint');
+  if(h) h.textContent = on
+    ? 'Debugläget är på: mätraden syns nere på sidan, och loggen ovanför fylls. Tryck på versionsraden fem gånger igen för att stänga av.'
+    : 'Tryck på versionsraden längst ner fem gånger för att visa diagnostiken.';
+  if(on) logRec('debugläge på');
+  if(säg) setHint(on ? 'Diagnostiken är framme.' : 'Diagnostiken är gömd igen.');
+}
+
+function debugTap(){
+  const now = Date.now();
+  dbgTaps = (now - dbgTapAt < 1200) ? dbgTaps + 1 : 1;
+  dbgTapAt = now;
+  if(dbgTaps < 5) return;
+  dbgTaps = 0;
+  setDebug(!document.body.classList.contains('debug'), true);
+}
+
 function renderMicNote(){
   $('micNote').innerHTML = MIC_NOTE[detectOS()] || MIC_NOTE.other;
   $('micField').hidden = false;
   /* Bara på iPhone. Överallt annars är continuous och delresultat självklara
      och ett reglage vore bara en knapp som kan ställas fel. */
+  /* Reglagen betyder bara något på iPhone; .dbg avgör om de syns alls. */
   $('recTuning').hidden = detectOS() !== 'ios';
 }
 
@@ -2747,6 +2777,14 @@ function setSndFail(v){ S.sndFail = v; $('cbFail').checked = v; }
 $('cbMeter').onchange = e=>{ setMeter(e.target.checked); remember(); };
 $('cbCont').onchange    = e=>{ setRecTuning(e.target.checked, S.recInterim); remember(); };
 $('cbInterim').onchange = e=>{ setRecTuning(S.recCont, e.target.checked); remember(); };
+$('build').addEventListener('click', debugTap);
+/* Att skriva #debug i adressfältet på en sida som redan är öppen är en
+   navigering inom dokumentet: ingenting laddas om och init körde för länge
+   sedan. Utan det här hände alltså ingenting alls, vilket är precis den sorts
+   tystnad som gör felsökning värdelös. */
+window.addEventListener('hashchange', ()=>{
+  if(location.hash.indexOf('debug') >= 0) setDebug(true, true);
+});
 $('logCopyBtn').onclick = ()=>{
   const el = $('recLog');
   el.select();
@@ -2937,6 +2975,9 @@ buildTargets();
 setIcons();
 renderVoiceHelp();
 renderMicNote();
+/* Efter renderMicNote, så hint-texten hittar sitt element. */
+setDebug(location.hash.indexOf('debug') >= 0 ||
+         (()=>{ try{ return localStorage.getItem(DBG_KEY) === '1'; }catch(e){ return false; } })(), false);
 renderBuild();
 renderInstall();
 initStore();

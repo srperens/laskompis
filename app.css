@@ -129,6 +129,7 @@ body{
   .controls{gap:10px;padding:0 12px 12px}
   .key{display:none}          /* keyboard hints are meaningless on touch */
   .panel .readouts{display:none}  /* diagnostics hidden — progress track stays.
+       Debugläget tar tillbaka dem, se .dbg-reglerna längre ner.
        Needs the extra specificity: the .readouts display:flex rule further
        down the file would otherwise win on source order. */
   .panel{padding:8px 12px calc(10px + env(safe-area-inset-bottom))}
@@ -193,6 +194,18 @@ body{
   padding-bottom:10px;
 }
 .hint.warm{color:var(--good)}
+
+/* Diagnostiken hör inte hemma framför ett barn, men den måste gå att få fram
+   på en telefon där ingen konsol finns. Allt sådant är .dbg och visas bara i
+   debugläget — som slås på genom att trycka på versionsraden fem gånger, eller
+   med #debug i adressen. */
+.dbg{display:none !important}
+body.debug .dbg{display:block !important}
+body.debug .panel .readouts{display:flex !important}
+#recLog{
+  font-family:'JetBrains Mono',monospace;
+  font-size:11px;line-height:1.45;white-space:pre;
+}
 
 /* ---------- controls ---------- */
 .controls{
