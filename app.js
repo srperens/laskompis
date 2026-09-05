@@ -158,6 +158,8 @@ const S = {
   hypLen: 0,        // tokens seen so far in this session — what a mute consumes up to
   echo: [],         // what the app has said and not yet heard come back
   echoEnd: 0,       // how far into this session's transcript was the app's own voice
+  hypFloor: 0,      // nothing before this is shown: it belongs to a cut that has been made
+  cutWanted: false, // a sentence change asked for an empty transcript and did not get one yet
   lastRescue: 0,
   sndOk: false,
   sndFail: false,
@@ -510,7 +512,7 @@ const ECHO_TTL = 8000;   // a word the recognizer never made out must not suppre
 
 function noteEcho(text){
   const t = tokens(text);
-  if(t.length) S.echo.push({ toks:t, at: performance.now() });
+  if(t.length) S.echo.push({ toks:t, at: performance.now(), heard:false });
 }
 
 /* Drop the app's own words from the front of what is new. Only a leading run:
@@ -522,9 +524,19 @@ function dropEcho(toks){
   if(S.hypConsumed > toks.length) S.hypConsumed = toks.length;
   while(S.echo.length && S.hypConsumed < toks.length){
     const head = S.echo[0];
-    if(!matches(toks[S.hypConsumed], head.toks[0])) break;
+    if(!matches(toks[S.hypConsumed], head.toks[0])){
+      /* Part of this utterance came back and the rest did not — the recogniser
+         made nothing of it. What is left is never going to arrive, and leaving
+         it queued means the next word the child happens to say that matches it
+         is thrown away as an echo. An untouched entry is still waiting for its
+         delivery and stays. */
+      if(head.heard){ S.echo.shift(); continue; }
+      break;
+    }
+    head.heard = true;
     S.hypConsumed++;
     S.echoEnd = S.hypConsumed;
+    if(S.hypFloor < S.hypConsumed) S.hypFloor = S.hypConsumed;
     head.toks.shift();
     if(!head.toks.length) S.echo.shift();
   }
@@ -543,13 +555,46 @@ function dropEcho(toks){
    consumed (the alignment anchor moves past it, so it can never be matched),
    and a short discard window swallows what is still in flight — audio the
    recognizer has heard but not yet delivered. */
-function resetTranscript(){
+/* The discard window used to be 1200 ms everywhere, and it was the app's whole
+   defence against hearing itself. It is not any more — dropEcho throws the
+   app's own words away by content, whenever they turn up — so the window is
+   now only about tokens still in flight from BEFORE a cut, and a child who has
+   just been told a word should not have to wait more than a moment to say it.
+
+   After speaking: none at all. There is nothing left to wait for.
+
+   At a sentence change: a short one, and only where it is needed. On iOS the
+   session is ended outright (see cutSession), so the list really is empty and
+   nothing can be in flight; elsewhere the session is continuous and a result
+   recorded before the cut can still arrive after it. */
+function resetTranscript(quietMs = 0){
   S.onsetAt = null;
   wasLoud = false;
   S.hypConsumed = S.hypLen;
-  S.ignoreUntil = performance.now() + 1200;
+  S.hypFloor = S.hypLen;
+  if(quietMs) S.ignoreUntil = performance.now() + quietMs;
   $('roHyp').textContent = '—';
   $('roHeard').textContent = '—';
+}
+
+/* A new sentence needs a transcript that is genuinely empty. Moving the anchor
+   forward is not the same thing: the recogniser's list still holds the previous
+   sentence, and only the recogniser can empty it. On iOS the session is
+   single-shot and restarts every couple of seconds anyway, so ending it here
+   costs nothing and is the only cut that actually cuts. Elsewhere the session
+   is continuous and a restart is expensive, so the soft cut stands. */
+function cutSession(){
+  if(!SINGLE_SHOT || !S.running || !rec) return;
+  /* Praise is spoken as a sentence finishes, and the next sentence loads while
+     it is still playing. Cutting then would pull the microphone out from under
+     the app's own voice, so the cut is remembered and made when the turn ends
+     — it must not simply be skipped. Losing it is what left the previous
+     sentence's words in the transcript, matching against the new sentence and
+     showing up in the panel as if the child had said them. */
+  if(S.speaking){ S.cutWanted = true; return; }
+  S.cutWanted = false;
+  if(!S.recLive) return;           // nothing to cut; the restart brings an empty one
+  try{ rec.stop(); }catch(e){}     // onend restarts it, with nothing in it
 }
 
 function loadLine(){
@@ -564,7 +609,16 @@ function loadLine(){
   }
   S.posSince = performance.now();
   S.lastMiscueKey = '';
-  resetTranscript();
+  /* 600 ms även på iOS, trots att sessionen dessutom snittas. Snittet tömmer
+     listan, men ljud som spelats in FÖRE snittet levereras ändå efteråt — och
+     landar då i den nya sessionen, där det matchas mot den nya meningen. Det
+     är den ena halvan av att förra meningens ord dök upp igen.
+
+     Kostar ingenting märkbart: ett radbyte följs av berömmet ändå, så barnet
+     väntar redan. Det är efter ett HJÄLPORD väntan inte får finnas, och där
+     är fönstret noll. */
+  resetTranscript(600);
+  cutSession();
   renderSentence();
   renderTrack();
   updateReadouts();
@@ -942,7 +996,7 @@ function finishLine(){
       }
       nextSection();
     }
-  }, 1600);
+  }, 900);
 }
 
 /* Running out of text no longer ends the session — the clock does that, or the
@@ -1040,10 +1094,11 @@ function beginTurn(text){
     if(S.speakSeq !== myTurn) return;
     clearTimeout(S.speakTimer);
     S.speaking = false;
-    resetTranscript();
+    resetTranscript();          // no quiet window: dropEcho covers the tail
     /* The single-shot session ended while the app talked and onend left the
        restart to us. On a continuous session this finds one already live and
        does nothing. */
+    if(SINGLE_SHOT && S.cutWanted) cutSession();   // a sentence change was waiting for this
     if(SINGLE_SHOT && !S.recLive) startRec(10);
     armHoldoff();
   };
@@ -1433,6 +1488,8 @@ function releaseAudio(){
   S.hypConsumed = 0;
   S.hypLen = 0;
   S.echoEnd = 0;
+  S.hypFloor = 0;
+  S.cutWanted = false;
   S.echo.length = 0;
   if(rafId){ cancelAnimationFrame(rafId); rafId = null; }
   if(micSrc){ try{ micSrc.disconnect(); }catch(e){} micSrc = null; }
@@ -1540,7 +1597,7 @@ function buildRecognizer(){
   /* Every new session has an empty result list, so the token anchor must be
      reset — but only here, where a session genuinely begins. applyAlign clamps
      it if this event never arrives. */
-  r.onstart = ()=>{ S.hypConsumed = 0; S.hypLen = 0; S.echoEnd = 0; markLive(); };
+  r.onstart = ()=>{ S.hypConsumed = 0; S.hypLen = 0; S.echoEnd = 0; S.hypFloor = 0; markLive(); };
   r.onaudiostart = markLive;
   r.onspeechstart = markLive;
 
@@ -1562,7 +1619,7 @@ function buildRecognizer(){
     /* From past the app's own voice: the panel says what was HEARD, and a row
        reading back the help word the app just said looks exactly like the app
        mistaking itself for the child — which is what it used to be doing. */
-    const sagt = toks.slice(S.echoEnd).join(' ');
+    const sagt = toks.slice(S.hypFloor).join(' ');
     $('roHyp').textContent = sagt.slice(-70) || '—';
     /* A single event can carry a finalized result followed by a fresh interim
        one. Looking only at the last result would classify the whole event as
@@ -1600,6 +1657,14 @@ function buildRecognizer(){
      recognition permanently — hence a few retries. */
   r.onend = ()=>{
     S.recLive = false;
+    /* The anchor is an index into THIS session's cumulative list, and the next
+       session starts with an empty one. onstart resets it too, but onstart is
+       droppable — and on iOS, where a single-shot session ends every couple of
+       seconds, that is a great many chances to drop it. An anchor left pointing
+       past the new list makes the app skip everything the child says while
+       looking perfectly alive. Ending is observed as reliably as starting, so
+       reset here as well. */
+    S.hypConsumed = 0; S.hypLen = 0; S.echoEnd = 0; S.hypFloor = 0;
     if(!S.running) return;
     /* On iOS a single-shot session ends after every utterance, so this is the
        ordinary way round: the restart is the mechanism, not a recovery. While

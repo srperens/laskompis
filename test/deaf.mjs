@@ -64,9 +64,17 @@ const st = () => page.evaluate(() => ({
   speaking: S.speaking, instanser: window.__sr.instances.length, starts: window.__sr.starts
 }));
 const say = w => page.evaluate(w => window.__sr.say(w, true), w);
-const gate = () => page.waitForFunction(
-  () => S.running && !S.speaking && performance.now() >= S.ignoreUntil && S.recLive,
-  null, { timeout: 30000 });
+/* recLive sätts av onstart, och attrappen låter start() och onstart ligga 5 ms
+   isär precis som en riktig igenkännare gör. Ett ord som levereras i det
+   glappet nollställs av onstart som hör till den nya sessionen. Det är inte
+   ett appfel — en session som just börjat har inte hört något än — men testet
+   måste låta den komma igång, annars mäter det sin egen kapplöpning. */
+const gate = async () => {
+  await page.waitForFunction(
+    () => S.running && !S.speaking && performance.now() >= S.ignoreUntil && S.recLive,
+    null, { timeout: 30000 });
+  await page.waitForTimeout(250);
+};
 
 const words = await page.evaluate(() => S.words.map(w => w.raw));
 console.log('1. igång:', JSON.stringify(await st()));
