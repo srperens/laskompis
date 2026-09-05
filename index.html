@@ -147,6 +147,34 @@
           <div class="presets" id="targets"></div>
           <p class="vinfo">Klockan räknar bara medan barnet läser. När tiden är slut pausar appen sig själv.</p>
         </div>
+        <!-- Bara på iPhone: WebKits igenkännare beter sig annorlunda än alla
+             andra, och vilken kombination som är bäst går inte att avgöra
+             någon annanstans än på en riktig telefon. Reglagen finns för att
+             kunna prova det på plats i stället för att gissa. -->
+        <div class="field" id="recTuning" hidden>
+          <label>Taligenkänning på iPhone</label>
+          <label class="check">
+            <input type="checkbox" id="cbInterim">
+            <span>Delresultat <em>markören flyttas medan barnet läser i stället för
+              efter varje paus — utan detta känns appen trög</em></span>
+          </label>
+          <label class="check">
+            <input type="checkbox" id="cbCont">
+            <span>Kontinuerlig session <em>av är rekommenderat på iPhone: WebKit
+              proppar igen och slutar leverera med den på</em></span>
+          </label>
+          <p class="vinfo">Ändringen tar effekt direkt. Startar om lyssningen.</p>
+        </div>
+        <div class="field">
+          <label>Händelselogg</label>
+          <textarea id="recLog" readonly rows="8" spellcheck="false"
+                    placeholder="Vad igenkännaren och rösten faktiskt gör, med tider. Fylls medan appen körs."></textarea>
+          <div class="btnrow">
+            <button class="tbtn" id="logCopyBtn">Kopiera</button>
+            <button class="tbtn" id="logClearBtn">Töm</button>
+          </div>
+          <p class="vinfo">På en telefon finns ingen konsol. Det här är vad som går att skicka vidare när något beter sig konstigt.</p>
+        </div>
         <div class="field" id="micField" hidden>
           <label>Mikrofon</label>
           <label class="check">

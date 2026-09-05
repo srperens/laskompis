@@ -46,7 +46,7 @@ await page.addInitScript(() => {
   }
   window.SpeechRecognition = FakeSR;
   window.webkitSpeechRecognition = FakeSR;
-  window.__sr.say = (text, isFinal) => {
+  window.__sr.säg = (text, isFinal) => {
     const i = window.__sr.instances[window.__sr.instances.length - 1];
     if (!i || !i.live || !i.onresult) return false;
     const r = [{ transcript: text }]; r.isFinal = !!isFinal;
@@ -79,7 +79,8 @@ const st = () => page.evaluate(() => ({
   spoke: window.__spoke.length,
   tal: document.getElementById('roTts').textContent
 }));
-const say = w => page.evaluate(w => window.__sr.say(w, true), w);
+const say  = w => page.evaluate(w => window.__sr.säg(w, true), w);
+const halv = w => page.evaluate(w => window.__sr.säg(w, false), w);
 const gate = () => page.waitForFunction(
   () => S.running && !S.speaking && performance.now() >= S.ignoreUntil,
   null, { timeout: 15000 });
@@ -104,12 +105,30 @@ console.log('2. igång:', JSON.stringify(igång));
 check(igång.recLive, 'igenkänningen lever efter start');
 check(igång.spoke > 0, 'introt talades');
 
-console.log('\n3. barnet läser två ord');
+/* Delresultat är hela poängen: markören ska följa orden medan barnet läser,
+   inte hoppa fram först när igenkännaren bestämt att ett yttrande tagit slut.
+   Utan dem känns appen trög på iPhone, och det var precis vad som hände när
+   interimResults råkade stå av. */
+console.log('\n3. markören följer delresultaten, ord för ord');
+const bygge = await page.evaluate(() => ({ cont: rec.continuous, interim: rec.interimResults }));
+console.log('   igenkännaren byggd med: ' + JSON.stringify(bygge));
+check(bygge.interim === true, 'delresultat är på');
+check(bygge.cont === false, 'sessionen är enkelskotts på iOS');
+
+const steg = [];
+for(let i = 1; i <= 2; i++){
+  await halv(words.slice(0, i).join(' '));
+  await page.waitForTimeout(300);
+  steg.push(await page.evaluate(() => S.pos));
+}
+console.log('   pos efter varje delresultat: ' + JSON.stringify(steg));
+check(steg[0] === 1 && steg[1] === 2, 'markören gick fram på delresultat, utan att vänta på final');
+
 await say(words.slice(0,2).join(' '));
 await page.waitForTimeout(600);
 const efterTvå = await st();
 console.log('   ' + JSON.stringify(efterTvå));
-check(efterTvå.pos === 2, 'markören flyttades två ord — appen hör');
+check(efterTvå.pos === 2, 'och står rätt när slutresultatet kommer');
 
 /* ---- kärnan: appen pratar mitt i passet ---- */
 console.log('\n4. hjälpordet: appen pratar utan att riva mikrofonen');
