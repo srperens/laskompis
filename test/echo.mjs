@@ -11,6 +11,7 @@
    allt levereras med fördröjning. */
 import { webkit, devices } from 'playwright';
 import { verdict } from './verdict.mjs';
+import { TYST } from './tyst.mjs';
 const BASE = process.env.BASE || 'http://127.0.0.1:8899';
 
 /* Längre än appens kastfönster. Det är hela poängen: en stoppklocka som
@@ -19,20 +20,25 @@ const LEVERANS_MS = 1800;
 
 const b = await webkit.launch();
 const page = await (await b.newContext({ ...devices['iPhone 13'] })).newPage();
+await page.addInitScript(TYST);
 const errors = [];
 page.on('pageerror', e => errors.push(e.message));
 
 await page.addInitScript(([dröjMs]) => {
-  window.__sr = { instances: [], starts: 0, ekon: [] };
+  window.__sr = { instances: [], starts: 0, aborts: 0, ekon: [] };
+  /* Enkelskott när appen ber om det: en session som levererat ett slutresultat
+     avslutar sig själv, precis som WebKit gör med continuous=false. Det är den
+     verkliga rytmen på iOS, och appen ska starta om i onend. */
   class FakeSR {
-    constructor(){ window.__sr.instances.push(this); this.live = false; this.rows = []; }
+    constructor(){ window.__sr.instances.push(this); this.live = false; this.rows = [];
+                   this.continuous = false; this.interimResults = false; }
     start(){
       window.__sr.starts++;
       this.live = true; this.rows = [];
       setTimeout(() => this.onstart && this.onstart(), 5);
     }
     stop(){ this.live = false; setTimeout(() => this.onend && this.onend(), 5); }
-    abort(){ this.stop(); }
+    abort(){ window.__sr.aborts++; this.stop(); }
   }
   window.SpeechRecognition = FakeSR;
   window.webkitSpeechRecognition = FakeSR;
@@ -48,13 +54,14 @@ await page.addInitScript(([dröjMs]) => {
       const r = [{ transcript: text }]; r.isFinal = true;
       i.rows.push(r);
       i.onresult({ results: i.rows.slice(), resultIndex: i.rows.length - 1 });
+      /* continuous=false: sessionen är klar när slutresultatet är levererat. */
+      if(!i.continuous){ i.live = false; setTimeout(() => i.onend && i.onend(), 5); }
     }, dröjMs);
   };
 
   /* Högtalaren går in i mikrofonen. Ingen ekosläckning finns att begära för
      igenkännaren, så det här är vad telefonen faktiskt gör. */
   window.__spoke = [];
-  const realSpeak = speechSynthesis.speak.bind(speechSynthesis);
   speechSynthesis.speak = u => {
     window.__spoke.push(u.text);
     setTimeout(() => u.onstart && u.onstart(), 10);
@@ -63,7 +70,6 @@ await page.addInitScript(([dröjMs]) => {
       window.__sr.hör(u.text);          // appen hör sig själv
       u.onend && u.onend();
     }, 300);
-    try { realSpeak(u); } catch(e){}
   };
 }, [LEVERANS_MS]);
 

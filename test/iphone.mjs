@@ -15,10 +15,12 @@
    pratar — eller rivs den en gång per ord? */
 import { webkit, devices } from 'playwright';
 import { verdict } from './verdict.mjs';
+import { TYST } from './tyst.mjs';
 const BASE = process.env.BASE || 'http://127.0.0.1:8899';
 
 const b = await webkit.launch();
 const page = await (await b.newContext({ ...devices['iPhone 13'] })).newPage();
+await page.addInitScript(TYST);
 const errors = [];
 page.on('pageerror', e => errors.push(e.message));
 
@@ -26,16 +28,21 @@ await page.addInitScript(() => {
   /* Samma attrapp som deaf.mjs: kumulativ inom en session, och den levererar
      bara från en session som lever. starts räknar hur många gånger appen har
      begärt mikrofonen — talet som avslöjar en rivning per yttrande. */
-  window.__sr = { instances: [], starts: 0 };
+  window.__sr = { instances: [], starts: 0, stops: 0, aborts: 0 };
   class FakeSR {
-    constructor(){ window.__sr.instances.push(this); this.live = false; this.rows = []; }
+    constructor(){ window.__sr.instances.push(this); this.live = false; this.rows = [];
+                   this.continuous = false; this.interimResults = false; }
     start(){
       window.__sr.starts++;
       this.live = true; this.rows = [];
       setTimeout(() => this.onstart && this.onstart(), 5);
     }
-    stop(){ this.live = false; setTimeout(() => this.onend && this.onend(), 5); }
-    abort(){ this.stop(); }
+    /* Räknas bara när sessionen faktiskt lever: att stoppa en redan död
+       session kostar ingen ljudsession och är inte det felet handlar om. */
+    stop(){ if(this.live) window.__sr.stops++; this.live = false;
+            setTimeout(() => this.onend && this.onend(), 5); }
+    abort(){ if(this.live) window.__sr.aborts++; this.live = false;
+             setTimeout(() => this.onend && this.onend(), 5); }
   }
   window.SpeechRecognition = FakeSR;
   window.webkitSpeechRecognition = FakeSR;
@@ -53,13 +60,11 @@ await page.addInitScript(() => {
      ingenting, men händelsekedjan måste löpa hela vägen, annars släpps turen
      bara av vakthunden och testet mäter vakthunden i stället för appen. */
   window.__spoke = [];
-  const realSpeak = speechSynthesis.speak.bind(speechSynthesis);
   speechSynthesis.speak = u => {
     window.__spoke.push(u.text);
     /* Kort och förutsägbart — det är turens livscykel som prövas, inte tempot. */
     setTimeout(() => u.onstart && u.onstart(), 10);
     setTimeout(() => u.onend && u.onend(), 300);
-    try { realSpeak(u); } catch(e){}
   };
 });
 
@@ -70,7 +75,8 @@ const fails = [];
 const check = (ok, what) => { console.log(`  ${ok ? 'OK  ' : 'FEL '} ${what}`); if(!ok) fails.push(what); };
 const st = () => page.evaluate(() => ({
   pos: S.pos, speaking: S.speaking, recLive: S.recLive,
-  starts: window.__sr.starts, spoke: window.__spoke.length,
+  starts: window.__sr.starts, stops: window.__sr.stops, aborts: window.__sr.aborts,
+  spoke: window.__spoke.length,
   tal: document.getElementById('roTts').textContent
 }));
 const say = w => page.evaluate(w => window.__sr.say(w, true), w);
@@ -106,16 +112,22 @@ console.log('   ' + JSON.stringify(efterTvå));
 check(efterTvå.pos === 2, 'markören flyttades två ord — appen hör');
 
 /* ---- kärnan: appen pratar mitt i passet ---- */
-console.log('\n4. hjälpordet: appen pratar, sessionen ska stå kvar');
-const startsFöre = efterTvå.starts;
-await page.evaluate(() => setHold(400));
+console.log('\n4. hjälpordet: appen pratar utan att riva mikrofonen');
+/* Invarianten är inte att sessionen överlever — på iOS är den enkelskotts och
+   tar slut hela tiden av sig själv, vilket är hur WebKit vill ha det. Det som
+   inte får hända är att appen STOPPAR en levande session för att kunna prata:
+   det är den omförhandlingen av ljudsessionen som gjorde appen stum. */
+const rivFöre = efterTvå.stops + efterTvå.aborts;
+/* setHold ändrar bara värdet — timern som redan löper bär den gamla längden,
+   så den måste armeras om för att hjälpen ska komma inom testets fönster. */
+await page.evaluate(() => { setHold(400); armHoldoff(); });
 await page.waitForFunction(n => window.__spoke.length > n, efterTvå.spoke, { timeout: 15000 })
   .catch(() => {});
 const underTal = await st();
 console.log('   ' + JSON.stringify(underTal));
 check(underTal.spoke > efterTvå.spoke, 'hjälpordet talades');
-check(underTal.starts === startsFöre,
-      'ingen ny igenkänningssession begärdes för att prata — mikrofonen revs inte');
+check(underTal.stops + underTal.aborts === rivFöre,
+      'ingen levande session stoppades för att prata');
 
 console.log('\n5. och efteråt hör appen fortfarande');
 await page.evaluate(() => setHold(20000));
@@ -125,8 +137,8 @@ await page.waitForTimeout(600);
 const fin = await st();
 console.log('   ' + JSON.stringify(fin));
 check(fin.pos === 3, 'markören gick vidare efter att appen pratat');
-check(fin.recLive, 'igenkänningen lever fortfarande');
-check(fin.starts === startsFöre, 'fortfarande samma session hela vägen');
+check(fin.recLive, 'lyssningen kom tillbaka av sig själv efter talet');
+check(fin.stops + fin.aborts === rivFöre, 'och ingen rivning på hela vägen');
 
 console.log('\n6. TAL-raden säger vad syntesen gjorde');
 console.log('   TAL: ' + fin.tal);
@@ -135,5 +147,5 @@ check(fin.tal !== '—' && !/vakthund/.test(fin.tal),
 
 verdict(fails.length === 0 && errors.length === 0,
         `${fails.length ? fails.join('; ') : 'alla kontroller gröna'}, ` +
-        `sessioner ${fin.starts}, pos ${fin.pos}, sidfel ${errors.length}`);
+        `sessioner ${fin.starts}, rivningar ${fin.stops + fin.aborts}, pos ${fin.pos}, sidfel ${errors.length}`);
 await b.close();

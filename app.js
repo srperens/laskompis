@@ -157,6 +157,7 @@ const S = {
   hypConsumed: 0,
   hypLen: 0,        // tokens seen so far in this session — what a mute consumes up to
   echo: [],         // what the app has said and not yet heard come back
+  echoEnd: 0,       // how far into this session's transcript was the app's own voice
   lastRescue: 0,
   sndOk: false,
   sndFail: false,
@@ -523,6 +524,7 @@ function dropEcho(toks){
     const head = S.echo[0];
     if(!matches(toks[S.hypConsumed], head.toks[0])) break;
     S.hypConsumed++;
+    S.echoEnd = S.hypConsumed;
     head.toks.shift();
     if(!head.toks.length) S.echo.shift();
   }
@@ -927,7 +929,7 @@ function finishLine(){
       S.lines = hardList(6);
       S.line = 0; loadLine(); armHoldoff();
       setHint('Nu tar vi de svåraste orden en gång till.');
-      speak('Nu tar vi de svåra orden en gång till.', 'phrase');
+      speak('Nu tar vi de svåra en gång till.', 'phrase');
     }
     else {
       // the review is over: put the real text back and clear the tally, so a
@@ -1039,6 +1041,10 @@ function beginTurn(text){
     clearTimeout(S.speakTimer);
     S.speaking = false;
     resetTranscript();
+    /* The single-shot session ended while the app talked and onend left the
+       restart to us. On a continuous session this finds one already live and
+       does nothing. */
+    if(SINGLE_SHOT && !S.recLive) startRec(10);
     armHoldoff();
   };
   clearTimeout(S.speakTimer);
@@ -1426,6 +1432,7 @@ function releaseAudio(){
   S.ignoreUntil = performance.now() + 1200;
   S.hypConsumed = 0;
   S.hypLen = 0;
+  S.echoEnd = 0;
   S.echo.length = 0;
   if(rafId){ cancelAnimationFrame(rafId); rafId = null; }
   if(micSrc){ try{ micSrc.disconnect(); }catch(e){} micSrc = null; }
@@ -1484,6 +1491,29 @@ function tick(){
 /* ================= speech recognition ================= */
 let rec=null;
 
+/* iOS needs the opposite settings to everywhere else, and both halves are
+   documented behaviour rather than guesswork.
+
+   continuous:true clogs WebKit's recogniser on iOS until it quietly stops
+   delivering — the app then looks alive and hears nothing, which is exactly
+   the deafness that has been chased from the wrong end all along.
+
+   interimResults:true is worse: it moves recognition off the on-device engine
+   onto a cloud one, which answers slowly and only with finals. That is why the
+   app's own voice kept arriving too late to be gated — no discard window can
+   win against a result that comes back seconds after the audio.
+
+   So on iOS the session is single-shot: it ends after each utterance and is
+   restarted as it ends, with the short delay WebKit needs to let go. Each
+   session then carries one short, on-device, final transcript, and the
+   cumulative list that everything else had to be defended against simply is
+   not there. Everywhere else continuous is both cheaper and better, and stays.
+
+   https://lilting.ch/en/articles/ios-webspeech-api-tips
+   https://github.com/WebKit/Documentation/issues/120 */
+const SINGLE_SHOT = detectOS() === 'ios';
+const REC_RESTART_MS = 200;   // WebKit needs a beat before it will start again
+
 function buildRecognizer(){
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if(!SR){
@@ -1492,8 +1522,8 @@ function buildRecognizer(){
   }
   const r = new SR();
   r.lang = LANG.tag;
-  r.continuous=true;
-  r.interimResults=true;
+  r.continuous     = !SINGLE_SHOT;
+  r.interimResults = !SINGLE_SHOT;
   r.maxAlternatives=1;
 
   /* Three ways in, because onstart is droppable and it used to be the only one
@@ -1510,7 +1540,7 @@ function buildRecognizer(){
   /* Every new session has an empty result list, so the token anchor must be
      reset — but only here, where a session genuinely begins. applyAlign clamps
      it if this event never arrives. */
-  r.onstart = ()=>{ S.hypConsumed = 0; S.hypLen = 0; markLive(); };
+  r.onstart = ()=>{ S.hypConsumed = 0; S.hypLen = 0; S.echoEnd = 0; markLive(); };
   r.onaudiostart = markLive;
   r.onspeechstart = markLive;
 
@@ -1529,7 +1559,11 @@ function buildRecognizer(){
        theirs, and it is aligned as soon as the window closes. Swallowing it
        wholesale is what left the app looking deaf. */
     if(S.speaking || performance.now() < S.ignoreUntil) return;
-    $('roHyp').textContent = full.trim().slice(-70) || '—';
+    /* From past the app's own voice: the panel says what was HEARD, and a row
+       reading back the help word the app just said looks exactly like the app
+       mistaking itself for the child — which is what it used to be doing. */
+    const sagt = toks.slice(S.echoEnd).join(' ');
+    $('roHyp').textContent = sagt.slice(-70) || '—';
     /* A single event can carry a finalized result followed by a fresh interim
        one. Looking only at the last result would classify the whole event as
        interim and the finalized misreading would never be judged, so scan
@@ -1567,6 +1601,13 @@ function buildRecognizer(){
   r.onend = ()=>{
     S.recLive = false;
     if(!S.running) return;
+    /* On iOS a single-shot session ends after every utterance, so this is the
+       ordinary way round: the restart is the mechanism, not a recovery. While
+       the app is speaking it waits for the turn's release — and that is not a
+       teardown, because the session had already ended by itself. Nothing is
+       stopped in order to speak; that was what renegotiated the audio session
+       and made the app stum. */
+    if(SINGLE_SHOT && S.speaking) return;
     const retry = n=>{
       if(!S.running || rec !== r) return;
       try{ r.start(); }
@@ -1578,7 +1619,8 @@ function buildRecognizer(){
         resetRecognition();
       }
     };
-    retry(6);
+    if(SINGLE_SHOT) setTimeout(()=>retry(6), REC_RESTART_MS);
+    else            retry(6);
   };
   return r;
 }
