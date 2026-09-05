@@ -663,7 +663,6 @@ function updateReadouts(){
   $('roPos').textContent = `${S.pos}/${S.words.length}`;
   $('roMiss').textContent = S.misses;
   $('score').textContent = S.score;
-  if(!S.meter) return;      // latensen mäts av tick(), som inte kör då
   if(S.lats.length){
     const sorted=[...S.lats].sort((a,b)=>a-b);
     $('roMed').textContent = Math.round(sorted[Math.floor(sorted.length/2)])+' ms';
@@ -1629,7 +1628,19 @@ function buildRecognizer(){
      it if this event never arrives. */
   r.onstart = ()=>{ logRec('start'); S.hypConsumed = 0; S.hypLen = 0; S.echoEnd = 0; S.hypFloor = 0; markLive(); };
   r.onaudiostart = markLive;
-  r.onspeechstart = markLive;
+  /* Igenkännaren säger själv när den hört någon börja prata, och det kostar
+     ingen inspelning. Det är den enda vägen till ett latensvärde på iPhone,
+     där nivåmätaren är av med flit — och det är dessutom ett bättre mått där:
+     det som mäts är igenkännarens egen fördröjning, alltså precis det som
+     känns trögt. Där mätaren är på hinner dess rösttröskel oftast först; den
+     som kommer först vinner, och båda mäter samma sak. */
+  r.onspeechstart = ()=>{
+    markLive();
+    if(!S.speaking && S.onsetAt === null && performance.now() >= S.ignoreUntil){
+      S.onsetAt = performance.now();
+      logRec('röststart');
+    }
+  };
 
   r.onresult = ev=>{
     S.recSeenAt = performance.now();   // results are the best proof of all
@@ -2770,10 +2781,11 @@ function setRecTuning(cont, interim){
 /* Ett ställe som vet vad tomma latensrader ska säga. Utan det satte setMeter
    dem till "av" och applyProfile skrev tillbaka streck en rad senare — och på
    iPhone, där mätaren alltid är av, syntes bara strecken. */
+/* Bara stapeln hänger på mätaren. Latensen mäts från igenkännarens egen
+   röststart där den finns, så den är mätbar även på iPhone. */
 function clearLatency(){
-  const t = S.meter ? '–' : 'av';
-  $('roLat').textContent = t;
-  $('roMed').textContent = t;
+  $('roLat').textContent = '–';
+  $('roMed').textContent = '–';
 }
 
 function setMeter(v){
@@ -2785,7 +2797,6 @@ function setMeter(v){
      ett val, och på iPhone ett med goda skäl. */
   $('lvlOff').hidden = !!v;
   $('roLevel').querySelector('.level').hidden = !v;
-  clearLatency();
   if(!v) releaseMeter();
   else if(S.running) ensureAudio();
 }

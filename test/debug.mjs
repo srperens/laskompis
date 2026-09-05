@@ -109,10 +109,13 @@ console.log('   ' + logg.split('\n').slice(0,4).join('\n   '));
 check(/bygger igenkännare/.test(logg) && /start/.test(logg),
       'igenkännarens händelser står i loggen');
 
-/* Tre rader som står tomma för alltid ser ut som tre fel. På iPhone är
+/* En avstängd funktion ska inte gå att förväxla med en trasig. På iPhone är
    nivåmätaren av med flit — inspelning flyttar appens röst till lilla
-   högtalaren — och latensen mäts av samma tick() som mätaren driver. Då ska
-   panelen säga att de är av, inte visa streck. */
+   högtalaren — så stapeln säger "av" i stället för att stå stilla.
+
+   Latensen däremot mäts från igenkännarens egen röststart och behöver ingen
+   mätare, så den ska visa streck tills något mätts, inte "av". Skillnaden är
+   hela poängen: NIVÅ kan inte mätas här, LATENS kan. */
 console.log('\n6. avstängd mätare ska synas som avstängd, inte trasig');
 const rader = () => page.evaluate(() => ({
   meter: S.meter,
@@ -123,16 +126,16 @@ const rader = () => page.evaluate(() => ({
 const av = await rader();
 console.log('   iPhone som förval: ' + JSON.stringify(av));
 check(av.meter === false, 'mätaren är av som förval på iPhone');
-check(av.nivå === 'av' && av.lat === 'av' && av.med === 'av',
-      'NIVÅ, LATENS och MEDIAN säger "av" i stället för streck');
+check(av.nivå === 'av', 'NIVÅ säger "av" i stället för att stå stilla');
+check(av.lat === '–' && av.med === '–',
+      'men LATENS och MEDIAN är mätbara utan mätaren och står som omätta');
 
 await page.evaluate(()=>setMeter(true));
 const mätPå = await rader();
 console.log('   med mätaren på:    ' + JSON.stringify(mätPå));
-check(mätPå.nivå === 'stapel' && mätPå.lat === '–' && mätPå.med === '–',
-      'och kommer tillbaka som mätbara när den slås på');
+check(mätPå.nivå === 'stapel', 'stapeln kommer fram när mätaren slås på');
 await page.evaluate(()=>setMeter(false));
-check((await rader()).lat === 'av', 'och tillbaka till "av" när den stängs av igen');
+check((await rader()).nivå === 'av', 'och göms igen när den stängs av');
 
 verdict(fails.length === 0 && errors.length === 0,
         `${fails.length ? fails.join('; ') : 'alla kontroller gröna'}, sidfel ${errors.length}`);

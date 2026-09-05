@@ -39,6 +39,9 @@ await page.addInitScript(() => {
     }
     /* Räknas bara när sessionen faktiskt lever: att stoppa en redan död
        session kostar ingen ljudsession och är inte det felet handlar om. */
+    /* Riktiga igenkännare säger till när de hör någon börja prata. Attrappen
+       måste göra det också, annars kan testet inte se latensmätningen. */
+    talaStart(){ if(this.live && this.onspeechstart) this.onspeechstart(); }
     stop(){ if(this.live) window.__sr.stops++; this.live = false;
             setTimeout(() => this.onend && this.onend(), 5); }
     abort(){ if(this.live) window.__sr.aborts++; this.live = false;
@@ -163,6 +166,21 @@ console.log('\n6. TAL-raden säger vad syntesen gjorde');
 console.log('   TAL: ' + fin.tal);
 check(fin.tal !== '—' && !/vakthund/.test(fin.tal),
       'syntesen rapporterade ett riktigt steg, inte tystnad in i vakthunden');
+
+/* Latensen är det enda måttet som svarar på "känns appen trög", och på iPhone
+   är nivåmätaren av med flit — så den måste komma från igenkännarens egen
+   röststart. Utan den stod raden tom just där frågan ställdes. */
+console.log('\n7. latensen ska gå att mäta även med nivåmätaren av');
+await page.evaluate(() => { S.onsetAt = null; });
+await page.evaluate(() => window.__sr.instances[window.__sr.instances.length-1].talaStart());
+await page.waitForTimeout(120);
+const onset = await page.evaluate(() => S.onsetAt !== null);
+check(onset, 'röststarten från igenkännaren noteras');
+await halv(words.slice(0,4).join(' '));
+await page.waitForTimeout(300);
+const lat = await page.evaluate(() => document.getElementById('roLat').textContent);
+console.log('   LATENS: ' + lat + '   (mätaren av: ' + !(await page.evaluate(()=>S.meter)) + ')');
+check(/^\d+ ms$/.test(lat), 'LATENS visar ett tal, inte ett streck');
 
 verdict(fails.length === 0 && errors.length === 0,
         `${fails.length ? fails.join('; ') : 'alla kontroller gröna'}, ` +
