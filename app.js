@@ -962,14 +962,36 @@ const LANG = {
   name:   'Svenska'
 };
 
+/* iOS cannot capture and speak at the same time: while a recognition session
+   holds the microphone the audio session sits in record mode, and what the app
+   says is muted or moved out of earshot. The half-duplex gate on the transcript
+   is not enough there — the words never reach the child's ears at all. So on
+   iOS the microphone is handed back for the duration of an utterance: the
+   capture is stopped before speaking, with a short beat for the audio session
+   to flip over to playback, and re-requested when the turn is released (see
+   beginTurn). Everywhere else capture and playback coexist and the session is
+   left alone, which is the cheaper and more robust arrangement. */
+const PAUSE_REC_TO_SPEAK = detectOS() === 'ios';
+
 /* Two speeds. A single word to be sounded out needs the slow pace;
    encouragement and instructions in between sound sleepy at that tempo
    and therefore run faster. 'word' is the default since it is the
    sensitive use case. */
 function speak(text, kind='word'){
   const rate = kind==='phrase' ? Math.min(1.8, S.rate * 1.28) : S.rate;
-  if(piper.state === 'ready') speakPiper(text, rate);
-  else                       speakSystem(text, rate);
+  const go = ()=>{
+    if(piper.state === 'ready') speakPiper(text, rate);
+    else                        speakSystem(text, rate);
+  };
+  if(PAUSE_REC_TO_SPEAK && S.running && rec){
+    /* Claimed ahead of beginTurn, so nothing — onend's restart above all —
+       grabs the microphone back during the beat below. */
+    S.speaking = true;
+    try{ rec.stop(); }catch(e){}
+    setTimeout(go, 250);
+    return;
+  }
+  go();
 }
 
 /* Both engines share this bookkeeping.
@@ -997,6 +1019,9 @@ function beginTurn(text){
     clearTimeout(S.speakTimer);
     S.speaking = false;
     resetTranscript();
+    /* The microphone was handed back for this utterance — re-request it. On a
+       session that never let go this throws and is caught, costing nothing. */
+    if(PAUSE_REC_TO_SPEAK) startRec(10);
     armHoldoff();
   };
   clearTimeout(S.speakTimer);
@@ -1005,7 +1030,9 @@ function beginTurn(text){
 }
 
 function speakSystem(text, rate){
-  if(!window.speechSynthesis) return;
+  // speak() may have claimed the speaking flag before this ran — hand it back,
+  // or a browser without synthesis would leave the microphone gated for good
+  if(!window.speechSynthesis){ S.speaking = false; return; }
   // only interrupt when something is actually queued — a gratuitous cancel()
   // right before speak() can wedge the synthesizer on iOS
   if(speechSynthesis.speaking || speechSynthesis.pending) speechSynthesis.cancel();
@@ -1504,6 +1531,10 @@ function buildRecognizer(){
   r.onend = ()=>{
     S.recLive = false;
     if(!S.running) return;
+    /* On iOS the microphone was handed back on purpose while the app speaks —
+       restarting here would grab it back mid-utterance and mute the rest of
+       the word. The turn's release re-requests it. */
+    if(PAUSE_REC_TO_SPEAK && S.speaking) return;
     const retry = n=>{
       if(!S.running || rec !== r) return;
       try{ r.start(); }
@@ -1622,6 +1653,11 @@ function resetRecognition(){
    deaf for the rest of the session. */
 function startRec(tries){
   if(!S.running || !rec) return;
+  /* On iOS, capturing mutes the app's own voice, so while it is talking the
+     start waits for the turn's release. Except the very first session of all:
+     that one carries the microphone permission prompt and needs what is left
+     of the user's gesture, so it starts at once even under the intro. */
+  if(PAUSE_REC_TO_SPEAK && S.speaking && S.recStarts) return;
   try{ rec.start(); }
   catch(e){ if(tries > 0) setTimeout(()=>startRec(tries-1), 200); }
 }
