@@ -138,6 +138,13 @@ body{
 @media (max-width:480px){
   .wordmark{display:none}
 }
+/* Allt som hör till läsandet i en kolumn, så att .main sträcker sig ända ner
+   till mätpanelen och menyns skiljelinje får något att följa hela vägen. */
+.read{
+  flex:1 1 auto;
+  display:flex;flex-direction:column;
+  min-width:0;min-height:0;
+}
 .stage{
   flex:1 1 auto;
   display:flex;

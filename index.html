@@ -48,23 +48,28 @@
 
 <div class="main">
   <nav class="side" id="side" aria-label="Färdiga texter"></nav>
-  <div class="stage"><div id="sentence"></div></div>
-</div>
+  <!-- Läsytan är en egen kolumn så att menyn blir en riktig kolumn bredvid
+       den: hinten och knappraden hör till läsandet och ska ligga innanför,
+       annars slutar menyns skiljelinje i luften ovanför dem. -->
+  <div class="read">
+    <div class="stage"><div id="sentence"></div></div>
 
-<div class="hint" id="hint">Tryck på Börja läsa när du är redo.</div>
+    <div class="hint" id="hint">Tryck på Börja läsa när du är redo.</div>
 
-<div class="controls">
-  <div class="ctl">
-    <button class="icon primary" id="startBtn" aria-label="Börja läsa" title="Börja läsa — mellanslag"></button>
-    <div class="key">[mellanslag]</div>
-  </div>
-  <div class="ctl">
-    <button class="icon" id="sayBtn" aria-label="Lyssna på ordet" title="Läs ordet åt mig — L"></button>
-    <div class="key">[L]</div>
-  </div>
-  <div class="ctl">
-    <button class="icon" id="nextBtn" aria-label="Nästa mening" title="Nästa mening — högerpil"></button>
-    <div class="key">[&rarr;]</div>
+    <div class="controls">
+      <div class="ctl">
+        <button class="icon primary" id="startBtn" aria-label="Börja läsa" title="Börja läsa — mellanslag"></button>
+        <div class="key">[mellanslag]</div>
+      </div>
+      <div class="ctl">
+        <button class="icon" id="sayBtn" aria-label="Lyssna på ordet" title="Läs ordet åt mig — L"></button>
+        <div class="key">[L]</div>
+      </div>
+      <div class="ctl">
+        <button class="icon" id="nextBtn" aria-label="Nästa mening" title="Nästa mening — högerpil"></button>
+        <div class="key">[&rarr;]</div>
+      </div>
+    </div>
   </div>
 </div>
 
