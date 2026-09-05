@@ -155,12 +155,14 @@ const S = {
   meter: true,
   recCont: detectOS() !== 'ios',   // continuous — off on iOS, where it clogs WebKit
   recInterim: true,   // interimResults — what moves the cursor mid-word
+  recTalk: true,      // keep listening while the app itself speaks
   posSince: 0,
   hypConsumed: 0,
   hypLen: 0,        // tokens seen so far in this session — what a mute consumes up to
   echo: [],         // what the app has said and not yet heard come back
   echoEnd: 0,       // how far into this session's transcript was the app's own voice
   hypFloor: 0,      // nothing before this is shown: it belongs to a cut that has been made
+  hypToks: null,    // the last tokens delivered, for aligning again when the gate lifts
   cutWanted: false, // a sentence change asked for an empty transcript and did not get one yet
   lastRescue: 0,
   sndOk: false,
@@ -1097,7 +1099,22 @@ function beginTurn(text){
     if(S.speakSeq !== myTurn) return;
     clearTimeout(S.speakTimer);
     S.speaking = false;
-    resetTranscript();          // no quiet window: dropEcho covers the tail
+    /* Deliberately NOT resetTranscript(): that moves the anchor past
+       everything heard so far, and everything heard so far now includes the
+       child answering over the last syllable of the help word. Throwing the
+       transcript away here was the old defence against the app's own voice,
+       from before dropEcho threw it away by content — keeping it means the
+       app asks the child to say a word and then discards them saying it.
+
+       The onset is cleared so the next latency measurement starts fresh; the
+       anchor is left exactly where it is. */
+    S.onsetAt = null;
+    wasLoud = false;
+    /* What arrived while the gate was shut was held, not eaten — but nothing
+       has asked for it to be aligned. A child who answers over the help word
+       and then waits would sit there unheard until they spoke again. Align
+       what is already in hand the moment the gate lifts. */
+    if(S.hypToks && S.hypToks.length > S.hypConsumed) applyAlign(S.hypToks, false);
     /* The single-shot session ended while the app talked and onend left the
        restart to us. On a continuous session this finds one already live and
        does nothing. */
@@ -1494,6 +1511,7 @@ function releaseAudio(){
   S.echoEnd = 0;
   S.hypFloor = 0;
   S.cutWanted = false;
+  S.hypToks = null;
   S.echo.length = 0;
   if(rafId){ cancelAnimationFrame(rafId); rafId = null; }
   if(micSrc){ try{ micSrc.disconnect(); }catch(e){} micSrc = null; }
@@ -1626,7 +1644,8 @@ function buildRecognizer(){
   /* Every new session has an empty result list, so the token anchor must be
      reset — but only here, where a session genuinely begins. applyAlign clamps
      it if this event never arrives. */
-  r.onstart = ()=>{ logRec('start'); S.hypConsumed = 0; S.hypLen = 0; S.echoEnd = 0; S.hypFloor = 0; markLive(); };
+  r.onstart = ()=>{ logRec('start'); S.hypConsumed = 0; S.hypLen = 0; S.echoEnd = 0; S.hypFloor = 0;
+                    S.hypToks = null; markLive(); };
   r.onaudiostart = markLive;
   /* Igenkännaren säger själv när den hört någon börja prata, och det kostar
      ingen inspelning. Det är den enda vägen till ett latensvärde på iPhone,
@@ -1649,6 +1668,7 @@ function buildRecognizer(){
     let anyFin = false;
     for(let i=ev.resultIndex; i<ev.results.length; i++) if(ev.results[i].isFinal){ anyFin = true; break; }
     const toks = tokens(full);
+    S.hypToks = toks;
     logRec(`result ${anyFin ? 'FINAL' : 'interim'} ${toks.length} tok  "${full.trim().slice(-40)}"` +
            (S.speaking ? '  [appen talar]' : ''));
     S.hypLen = toks.length;
@@ -1711,15 +1731,26 @@ function buildRecognizer(){
        past the new list makes the app skip everything the child says while
        looking perfectly alive. Ending is observed as reliably as starting, so
        reset here as well. */
-    S.hypConsumed = 0; S.hypLen = 0; S.echoEnd = 0; S.hypFloor = 0;
+    S.hypConsumed = 0; S.hypLen = 0; S.echoEnd = 0; S.hypFloor = 0; S.hypToks = null;
     if(!S.running) return;
     /* On iOS a single-shot session ends after every utterance, so this is the
-       ordinary way round: the restart is the mechanism, not a recovery. While
-       the app is speaking it waits for the turn's release — and that is not a
-       teardown, because the session had already ended by itself. Nothing is
-       stopped in order to speak; that was what renegotiated the audio session
-       and made the app stum. */
-    if(!S.recCont && S.speaking) return;
+       ordinary way round: the restart is the mechanism, not a recovery.
+
+       And it restarts even while the app is talking. Waiting for the turn to
+       end was what made the app feel dead after a help word: the child hears
+       the word, answers at once, and the app is not listening yet — it has not
+       even asked to. The wait is the synthesizer's end event, which iOS
+       delivers late, plus WebKit's own session start on top of that.
+
+       The reason to stay deaf is gone. The app's own voice used to be fought
+       with silence; dropEcho throws it away by content now, whenever it turns
+       up. So the microphone is live when the word ends, and a child who
+       answers over the last syllable is heard too — the gate holds those
+       tokens rather than eating them, and aligns them the moment it lifts.
+
+       Nothing is stopped in order to speak, then or now; that was what
+       renegotiated the audio session and made the app stum. */
+    if(!S.recCont && S.speaking && !S.recTalk) return;
     const retry = n=>{
       if(!S.running || rec !== r) return;
       try{ r.start(); }
@@ -2399,7 +2430,7 @@ function newProfile(name, avatar){
       size:52, holdoff:8000, strict:'normal', target:0,
       rate:0.8, voice:null, voiceURI:null, sndOk:false, sndFail:false, vol:0.85,
       meter: defaultMeter(),
-      recCont: defaultRecCont(), recInterim: true
+      recCont: defaultRecCont(), recInterim: true, recTalk: true
     }
   };
 }
@@ -2446,7 +2477,8 @@ function sanitize(raw){
       vol:     clampNum(st.vol, 0, 1, 0.85),
       meter:   typeof st.meter === 'boolean' ? st.meter : defaultMeter(),
       recCont:    typeof st.recCont    === 'boolean' ? st.recCont    : defaultRecCont(),
-      recInterim: typeof st.recInterim === 'boolean' ? st.recInterim : true
+      recInterim: typeof st.recInterim === 'boolean' ? st.recInterim : true,
+      recTalk:    typeof st.recTalk    === 'boolean' ? st.recTalk    : true
     };
     return o;
   }).filter(Boolean).slice(0, MAX_KIDS);
@@ -2489,7 +2521,7 @@ function remember(){
   p.settings = {
     size:S.size, holdoff:S.holdoff, strict:S.strict, target:S.target, rate:S.rate,
     voice:S.voiceName, voiceURI:S.voiceURI, sndOk:S.sndOk, sndFail:S.sndFail,
-    vol:S.vol, meter:S.meter, recCont:S.recCont, recInterim:S.recInterim
+    vol:S.vol, meter:S.meter, recCont:S.recCont, recInterim:S.recInterim, recTalk:S.recTalk
   };
   /* During the hard-word review S.lines holds the review words, not the text —
      saving then would replace the child's reading text with six loose words. */
@@ -2503,7 +2535,7 @@ function applyProfile(p){
   setSize(st.size); setHold(st.holdoff); setRate(st.rate); setVol(st.vol);
   setStrict(st.strict); setSndOk(st.sndOk); setSndFail(st.sndFail);
   setMeter(st.meter);
-  setRecTuning(st.recCont, st.recInterim);
+  setRecTuning(st.recCont, st.recInterim, st.recTalk);
   setTarget(st.target || 0);
   /* The clock measures one child's stretch, so it starts over on a swap —
      the lifetime total lives on the profile and is shown in the Barn tab. */
@@ -2765,16 +2797,18 @@ function setStrict(v){ S.strict = v; $('strict').value = v; }
 function setSndOk(v){ S.sndOk = v; $('cbOk').checked = v; }
 /* Rebuilding is the point: continuous and interimResults are read when the
    recogniser is constructed, so an existing session would keep the old ones. */
-function setRecTuning(cont, interim){
+function setRecTuning(cont, interim, talk){
   /* Delresultat är hela poängen med igenkänningen i den här appen: markören
      ska följa orden medan barnet läser, inte hoppa fram efter varje paus. Ett
      saknat värde ska därför betyda PÅ. Att låta undefined bli av gjorde appen
      trög på iPhone utan att någon inställning såg fel ut. */
   S.recCont = cont === undefined ? defaultRecCont() : !!cont;
   S.recInterim = interim === undefined ? true : !!interim;
+  S.recTalk = talk === undefined ? true : !!talk;
   $('cbCont').checked = S.recCont;
   $('cbInterim').checked = S.recInterim;
-  logRec(`inställning  continuous=${S.recCont} interim=${S.recInterim}`);
+  $('cbTalk').checked = S.recTalk;
+  logRec(`inställning  continuous=${S.recCont} interim=${S.recInterim} lyssnaUnderTal=${S.recTalk}`);
   if(S.running) resetRecognition();
 }
 
@@ -2803,8 +2837,9 @@ function setMeter(v){
 function setSndFail(v){ S.sndFail = v; $('cbFail').checked = v; }
 
 $('cbMeter').onchange = e=>{ setMeter(e.target.checked); remember(); };
-$('cbCont').onchange    = e=>{ setRecTuning(e.target.checked, S.recInterim); remember(); };
-$('cbInterim').onchange = e=>{ setRecTuning(S.recCont, e.target.checked); remember(); };
+$('cbCont').onchange    = e=>{ setRecTuning(e.target.checked, S.recInterim, S.recTalk); remember(); };
+$('cbInterim').onchange = e=>{ setRecTuning(S.recCont, e.target.checked, S.recTalk); remember(); };
+$('cbTalk').onchange    = e=>{ setRecTuning(S.recCont, S.recInterim, e.target.checked); remember(); };
 $('build').addEventListener('click', debugTap);
 /* Att skriva #debug i adressfältet på en sida som redan är öppen är en
    navigering inom dokumentet: ingenting laddas om och init körde för länge

@@ -151,6 +151,23 @@ check(underTal.spoke > efterTvå.spoke, 'hjälpordet talades');
 check(underTal.stops + underTal.aborts === rivFöre,
       'ingen levande session stoppades för att prata');
 
+/* Väntan efter ett hjälpord är det som gör appen outhärdlig att använda:
+   barnet hör ordet, svarar direkt, och appen lyssnar inte än — den har inte
+   ens bett om att få göra det. Mikrofonen ska vara igång redan medan ordet
+   sägs, så att svaret hörs i samma stund det kommer. */
+console.log('\n4b. mikrofonen ska leva REDAN medan appen pratar');
+check(underTal.speaking && underTal.recLive,
+      'lyssningen är igång mitt under hjälpordet');
+/* Och ett barn som svarar över sista stavelsen ska höras: grinden håller
+   orden i stället för att äta dem, och alignar dem när den lyfter. */
+await halv(words.slice(0,3).join(' '));
+const talarÄn = await page.evaluate(() => S.speaking);
+await page.waitForFunction(() => !S.speaking, null, { timeout: 15000 });
+await page.waitForTimeout(400);
+const öv = await st();
+console.log('   sa tre ord medan appen pratade (talade än: ' + talarÄn + '):', JSON.stringify({pos:öv.pos}));
+check(öv.pos === 3, 'ordet som sades över rösten hördes när grinden lyfte');
+
 console.log('\n5. och efteråt hör appen fortfarande');
 await page.evaluate(() => setHold(20000));
 await gate();
