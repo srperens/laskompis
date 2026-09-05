@@ -1000,7 +1000,12 @@ function beginTurn(text){
     armHoldoff();
   };
   clearTimeout(S.speakTimer);
-  S.speakTimer = setTimeout(release, Math.min(15000, 1200 + text.length*120));
+  S.speakTimer = setTimeout(()=>{
+    /* The engine never reported back — the panel must say so, or a word that
+       silently never sounded is indistinguishable from one that played. */
+    noteTts('vakthund');
+    release();
+  }, Math.min(15000, 1200 + text.length*120));
   return release;
 }
 
@@ -1018,8 +1023,10 @@ function speakSystem(text, rate){
      that is what makes it the fallback. */
   if(S.voice) u.voice = S.voice;
   const release = beginTurn(text);
-  u.onend = release;
-  u.onerror = release;
+  noteTts('köad');
+  u.onstart = ()=> noteTts('talar');
+  u.onend = ()=>{ noteTts('klar'); release(); };
+  u.onerror = e=>{ noteTts('fel: ' + (e && e.error || '?')); release(); };
   speechSynthesis.speak(u);
   // iOS sometimes leaves the synthesizer paused; resume() is a no-op elsewhere
   speechSynthesis.resume();
@@ -1094,8 +1101,8 @@ piperPlayer.setAttribute('playsinline', '');
 piperPlayer.preload = 'auto';
 
 
-piperPlayer.addEventListener('ended', ()=>{ if(piper.release) piper.release(); });
-piperPlayer.addEventListener('error', ()=>{ if(piper.release) piper.release(); });
+piperPlayer.addEventListener('ended', ()=>{ noteTts('klar'); if(piper.release) piper.release(); });
+piperPlayer.addEventListener('error', ()=>{ noteTts('fel: media'); if(piper.release) piper.release(); });
 
 /* A tenth of a second of 8-bit silence, built rather than embedded. */
 function silentWav(ms = 100, rate = 8000){
@@ -1126,6 +1133,16 @@ function piperUnlock(){
        the unlock still counted. Anything else means the gesture was gone. */
     e =>{ if(e && e.name === 'AbortError') piper.unlocked = true; }
   );
+}
+
+/* What the synthesizer last did, shown in the adult's panel. On a phone there
+   is no console, and "the word was queued but never started" versus "it played
+   to the end without a sound coming out" is the difference between two
+   entirely different iOS failures. This row is an instrument, not a fix: it is
+   what decides which of those two the app is actually suffering from. */
+function noteTts(msg){
+  const el = $('roTts');
+  if(el) el.textContent = msg;
 }
 
 function piperNote(msg){
@@ -1240,6 +1257,7 @@ function speakPiper(text, rate){
   const myTurn = S.speakSeq;                  // beginTurn just claimed this one
   piper.release = release;
   try{ piperPlayer.pause(); }catch(err){}
+  noteTts('syntetiserar');
   (async ()=>{
     const blob = await session.predict(text);
     /* The turn counter, not piper.release: a newer turn may belong to the system
@@ -1261,6 +1279,7 @@ function speakPiper(text, rate){
     piperPlayer.src = piper.url;
     piperPlayer.playbackRate = rate;
     await piperPlayer.play();
+    noteTts('spelar');
   })().catch(e =>{
     /* Assigning a new source rejects the previous play() with AbortError. The
        app interrupts itself constantly — a word cutting off the encouragement
