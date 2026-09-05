@@ -663,6 +663,7 @@ function updateReadouts(){
   $('roPos').textContent = `${S.pos}/${S.words.length}`;
   $('roMiss').textContent = S.misses;
   $('score').textContent = S.score;
+  if(!S.meter) return;      // latensen mäts av tick(), som inte kör då
   if(S.lats.length){
     const sorted=[...S.lats].sort((a,b)=>a-b);
     $('roMed').textContent = Math.round(sorted[Math.floor(sorted.length/2)])+' ms';
@@ -2506,7 +2507,7 @@ function applyProfile(p){
   S.reviewing = false; S.source = null;
   S.hard.clear(); $('roHard').textContent = 0;
   S.score = p.score; S.misses = 0; S.lats = [];
-  $('roLat').textContent = '–'; $('roMed').textContent = '–';
+  clearLatency();
 
   const lines = readableLines(p.text.split('\n'));
   S.lines = lines.length ? lines : PRESETS['Meningar'].slice();
@@ -2766,9 +2767,25 @@ function setRecTuning(cont, interim){
   if(S.running) resetRecognition();
 }
 
+/* Ett ställe som vet vad tomma latensrader ska säga. Utan det satte setMeter
+   dem till "av" och applyProfile skrev tillbaka streck en rad senare — och på
+   iPhone, där mätaren alltid är av, syntes bara strecken. */
+function clearLatency(){
+  const t = S.meter ? '–' : 'av';
+  $('roLat').textContent = t;
+  $('roMed').textContent = t;
+}
+
 function setMeter(v){
   S.meter = v;
   $('cbMeter').checked = v;
+  /* Mätaren driver mer än stapeln: rösttröskeln i tick() är det som mäter
+     latensen. Med den av står NIVÅ, LATENS och MEDIAN stilla för alltid, och
+     tre tomma rader ser ut som tre fel. Säg att de är av i stället — det är
+     ett val, och på iPhone ett med goda skäl. */
+  $('lvlOff').hidden = !!v;
+  $('roLevel').querySelector('.level').hidden = !v;
+  clearLatency();
   if(!v) releaseMeter();
   else if(S.running) ensureAudio();
 }

@@ -109,6 +109,31 @@ console.log('   ' + logg.split('\n').slice(0,4).join('\n   '));
 check(/bygger igenkännare/.test(logg) && /start/.test(logg),
       'igenkännarens händelser står i loggen');
 
+/* Tre rader som står tomma för alltid ser ut som tre fel. På iPhone är
+   nivåmätaren av med flit — inspelning flyttar appens röst till lilla
+   högtalaren — och latensen mäts av samma tick() som mätaren driver. Då ska
+   panelen säga att de är av, inte visa streck. */
+console.log('\n6. avstängd mätare ska synas som avstängd, inte trasig');
+const rader = () => page.evaluate(() => ({
+  meter: S.meter,
+  nivå: document.getElementById('lvlOff').hidden ? 'stapel' : document.getElementById('lvlOff').textContent,
+  lat: document.getElementById('roLat').textContent,
+  med: document.getElementById('roMed').textContent
+}));
+const av = await rader();
+console.log('   iPhone som förval: ' + JSON.stringify(av));
+check(av.meter === false, 'mätaren är av som förval på iPhone');
+check(av.nivå === 'av' && av.lat === 'av' && av.med === 'av',
+      'NIVÅ, LATENS och MEDIAN säger "av" i stället för streck');
+
+await page.evaluate(()=>setMeter(true));
+const mätPå = await rader();
+console.log('   med mätaren på:    ' + JSON.stringify(mätPå));
+check(mätPå.nivå === 'stapel' && mätPå.lat === '–' && mätPå.med === '–',
+      'och kommer tillbaka som mätbara när den slås på');
+await page.evaluate(()=>setMeter(false));
+check((await rader()).lat === 'av', 'och tillbaka till "av" när den stängs av igen');
+
 verdict(fails.length === 0 && errors.length === 0,
         `${fails.length ? fails.join('; ') : 'alla kontroller gröna'}, sidfel ${errors.length}`);
 await b.close();
