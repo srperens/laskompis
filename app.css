@@ -145,8 +145,13 @@ body{
   display:flex;flex-direction:column;
   min-width:0;min-height:0;
 }
+/* min-height:0 är inte kosmetik: ett flexbarn vägrar som standard krympa under
+   sitt innehåll, och utan den skjuter en hög mening hinten och knappraden
+   nedanför skärmkanten. Knapparna måste alltid synas — texten har egen scroll
+   och är det som ska ge vika när fönstret är lågt. */
 .stage{
   flex:1 1 auto;
+  min-height:0;
   display:flex;
   padding:40px 6vw;
   overflow-y:auto;
@@ -213,6 +218,34 @@ body{
 .icon:focus-visible{outline:3px solid var(--good);outline-offset:4px}
 .icon:active{transform:scale(.95)}
 @media (prefers-reduced-motion:reduce){ .icon:active{transform:none} }
+
+/* Låga fönster. Knappraden är det enda på sidan som aldrig får hamna utanför
+   skärmen — utan den går appen inte att starta eller pausa — så när höjden
+   inte räcker är det chromet omkring som ska ge vika, inte den.
+
+   Läsytans padding är det som verkligen klämmer: 40 px upp och ner kan inte
+   krympa hur mycket min-height:0 än säger, och tillsammans med hinten och
+   knapparna blev det mer än ett lågt fönster rymmer. Här trimmas alla tre. */
+@media (max-height:560px){
+  .stage{padding:10px 6vw}
+  .hint{font-size:15px;min-height:0;padding-bottom:4px}
+  .icon{width:54px;height:54px}
+  .icon svg{width:24px;height:24px}
+  .key{display:none}          /* tangentbordstipsen är det första som får gå */
+  .controls{gap:10px;padding:0 24px 10px}
+  #sentence{line-height:1.5}
+}
+@media (max-height:400px){
+  .icon{width:44px;height:44px}
+  .icon svg{width:20px;height:20px}
+  .hint{display:none}         /* sista utvägen: hinten går, knapparna stannar */
+  .controls{padding:0 24px 8px}
+  /* Toppraden och mätpanelen tar tillsammans 137 px som knapparna annars
+     inte får plats innanför. De är vuxenytor; knappraden är barnets. */
+  .top{padding:calc(6px + env(safe-area-inset-top)) 12px 6px}
+  .panel .readouts{display:none}   /* samma specificitet som mobilregeln, av samma skäl */
+  .panel{padding:6px 12px calc(6px + env(safe-area-inset-bottom))}
+}
 
 .big{
   font-family:'Atkinson Hyperlegible',sans-serif;
