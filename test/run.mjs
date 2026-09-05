@@ -15,7 +15,7 @@ process.on('exit', () => server.kill());
 await sleep(700);
 
 const tests = readdirSync(new URL('.', import.meta.url))
-  .filter(f => f.endsWith('.mjs') && !['run.mjs', 'verdict.mjs'].includes(f))
+  .filter(f => f.endsWith('.mjs') && !['run.mjs', 'verdict.mjs', 'tyst.mjs'].includes(f))
   .filter(f => !only.length || only.some(o => f.includes(o)))
   .sort();
 

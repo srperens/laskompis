@@ -1,9 +1,11 @@
 import { chromium, webkit } from 'playwright';
 import { verdict } from './verdict.mjs';
+import { TYST } from './tyst.mjs';
 const BASE = process.env.BASE || 'http://127.0.0.1:8899';
 const eng = (process.argv[2]||'chromium') === 'webkit' ? webkit : chromium;
 const b = await eng.launch();
 const page = await (await b.newContext()).newPage();
+await page.addInitScript(TYST);
 page.on('pageerror', e => console.log(`[pageerror] ${e.message}`));
 const net = [];
 page.on('request', r => { if (/huggingface/.test(r.url())) net.push(r.url().split('/').slice(-1)[0]); });

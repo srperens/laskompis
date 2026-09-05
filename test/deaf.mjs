@@ -1,10 +1,12 @@
 import { chromium } from 'playwright';
 import { verdict } from './verdict.mjs';
+import { TYST } from './tyst.mjs';
 const BASE = process.env.BASE || 'http://127.0.0.1:8899';
 const b = await chromium.launch({ args:[
   '--use-fake-device-for-media-stream','--use-fake-ui-for-media-stream',
   '--autoplay-policy=no-user-gesture-required']});
 const page = await (await b.newContext({ permissions:['microphone'] })).newPage();
+await page.addInitScript(TYST);
 page.on('pageerror', e => console.log(`[pageerror] ${e.message}`));
 
 /* Talet lämnar aldrig appen ostört: sessionen ska överleva att appen pratar,

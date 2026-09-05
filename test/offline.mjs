@@ -1,8 +1,10 @@
 import { chromium } from 'playwright';
 import { verdict } from './verdict.mjs';
+import { TYST } from './tyst.mjs';
 const BASE = process.env.BASE || 'http://127.0.0.1:8899';
 const b = await chromium.launch();
 const ctx = await b.newContext();
+await ctx.addInitScript(TYST);
 const page = await ctx.newPage();
 page.on('pageerror', e => console.log(`[pageerror] ${e.message}`));
 
